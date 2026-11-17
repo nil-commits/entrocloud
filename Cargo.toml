@@ -1,0 +1,119 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/zerovault-types",
+    "crates/zerovault-crypto",
+    "crates/zerovault-storage",
+    "crates/zerovault-vfs",
+    "crates/zerovault-core",
+    "crates/zerovault-daemon",
+    "crates/zerovault-cli",
+    "crates/zerovault-ui",
+    "tests/e2e",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.90"
+repository = "https://cloud.entropy.rs/zerovault"
+authors = ["cloud.entropy.rs"]
+
+[workspace.dependencies]
+# Internal workspace crates
+zerovault-types = { path = "crates/zerovault-types" }
+zerovault-crypto = { path = "crates/zerovault-crypto" }
+zerovault-storage = { path = "crates/zerovault-storage" }
+zerovault-vfs = { path = "crates/zerovault-vfs" }
+zerovault-core = { path = "crates/zerovault-core" }
+zerovault-daemon = { path = "crates/zerovault-daemon" }
+
+# Async runtime & concurrency
+tokio = { version = "1.54", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3"
+bytes = { version = "1.12", features = ["serde"] }
+parking_lot = "0.12"
+dashmap = "6.2"
+lru = "0.19"
+
+# Serialization, identifiers, errors & time
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+postcard = { version = "1.1", default-features = false, features = ["alloc", "use-std"] }
+thiserror = "2.0"
+anyhow = "1.0"
+uuid = { version = "1.29", features = ["v4", "v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+hex = "0.4"
+url = { version = "2.5", features = ["serde"] }
+
+# Hardware-accelerated cryptography & OS secret storage
+aws-lc-rs = { version = "1.19", features = ["prebuilt-nasm"] }
+aes-gcm = { version = "0.10", features = ["aes", "alloc", "zeroize"] }
+cpufeatures = "0.2"
+argon2 = { version = "0.5", features = ["std", "zeroize"] }
+hkdf = "0.12"
+sha2 = "0.10"
+blake3 = "1.8"
+subtle = "2.6"
+zeroize = { version = "1.9", features = ["derive", "zeroize_derive"] }
+rand = "0.8"
+keyring = { version = "3.6", features = [
+    "windows-native",
+    "async-secret-service",
+    "tokio",
+    "crypto-rust",
+    "linux-native",
+] }
+
+# Multi-cloud storage & OAuth2 + PKCE
+opendal = { version = "0.59", features = [
+    "services-gdrive",
+    "services-onedrive",
+    "services-dropbox",
+    "services-s3",
+    "services-webdav",
+    "services-fs",
+    "services-memory",
+    "layers-retry",
+    "layers-timeout",
+    "layers-concurrent-limit",
+] }
+oauth2 = "5.0"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+
+# Virtual Filesystem (Windows CfApi & Linux FUSE)
+cloud-filter = "0.0.7"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Storage_CloudFilters",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_System_Pipes",
+] }
+widestring = "1.2"
+nt-time = "0.15"
+flagset = "0.4"
+fuser = { version = "0.18", default-features = false }
+libc = "0.2"
+nix = { version = "0.31", features = ["fs", "user"] }
+
+# Local metadata WAL DB, CLI, IPC, UI & logging
+rusqlite = { version = "0.32", features = ["bundled", "chrono", "serde_json", "uuid", "blob"] }
+clap = { version = "4.6", features = ["derive", "env"] }
+dirs = "7.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+interprocess = { version = "2.4", features = ["tokio"] }
+tauri = { version = "2.12", features = ["tray-icon", "image-png", "image-ico"] }
+tauri-build = "2.7"
+tempfile = "3.27"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+opt-level = 3

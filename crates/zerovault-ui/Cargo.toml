@@ -1,0 +1,22 @@
+[package]
+name = "zerovault-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tauri = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+zerovault-daemon = { workspace = true }
+zerovault-types = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

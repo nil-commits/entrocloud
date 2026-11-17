@@ -1,0 +1,12 @@
+/target/
+**/target/
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.zv
+**/*.zvh
+**/*.zvm
+.DS_Store
+Thumbs.db
+node_modules/
+*.log
