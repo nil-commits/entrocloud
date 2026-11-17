@@ -1205,6 +1205,20 @@ impl VfsBackend for MockVfsBackend {
             .await
     }
 
+    async fn unpin(&self, inode: InodeId) -> ZeroVaultResult<()> {
+        let rec = self.getattr(inode).await?;
+        let next = if rec.hydration == HydrationState::Pinned {
+            if rec.size == 0 {
+                HydrationState::OnlineOnly
+            } else {
+                HydrationState::LocallyCached
+            }
+        } else {
+            rec.hydration
+        };
+        self.meta.set_hydration_and_pin(inode, next, false).await
+    }
+
     async fn dehydrate(&self, inode: InodeId) -> ZeroVaultResult<()> {
         let rec = self.getattr(inode).await?;
         if rec.pinned {

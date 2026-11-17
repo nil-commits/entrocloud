@@ -710,6 +710,11 @@ pub trait VfsBackend: Send + Sync {
     /// Pins `inode` offline (hydrates all missing chunks if needed and protects against dehydration).
     async fn pin(&self, inode: InodeId) -> ZeroVaultResult<()>;
 
+    /// Clears the offline pin flag so an inode becomes eligible for dehydration.
+    async fn unpin(&self, _inode: InodeId) -> ZeroVaultResult<()> {
+        Ok(())
+    }
+
     /// Dehydrates `inode` locally, reclaiming local disk/RAM cache unless pinned.
     async fn dehydrate(&self, inode: InodeId) -> ZeroVaultResult<()>;
 

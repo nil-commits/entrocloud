@@ -1,11 +1,14 @@
 //! Linux FUSE3 (`fuser`) virtual filesystem adapter.
 //!
-//! Wave 0 stub — implemented by `Agent-VFS-Linux` in Wave 1.
+//! Provides [`LinuxFuseFilesystem`] implementing [`fuser::Filesystem`] and
+//! [`LinuxFuseDrive`] implementing [`zerovault_types::VirtualDrive`] for
+//! unprivileged user-space FUSE3 mounts on Arch Linux and other Linux distros.
 
-use std::sync::Arc;
-use zerovault_types::VfsBackend;
+pub mod drive;
+pub mod fs;
 
-/// Placeholder handle during Wave 0; replaced by `LinuxFuseDrive` in Wave 1.
-pub struct LinuxFuseDriveStub {
-    _backend: Arc<dyn VfsBackend>,
-}
+pub use drive::LinuxFuseDrive;
+pub use fs::{
+    DirEntrySpec, DirtyWriteBuffer, LinuxFuseFilesystem, StatFsInfo, datetime_to_system_time,
+    error_to_errno, inode_to_file_attr, paginate_readdir_entries, xattr_list_payload,
+};

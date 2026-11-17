@@ -17,6 +17,27 @@ pub mod linux;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
+/// Constructs the native [`VirtualDrive`] adapter for the current host OS.
+///
+/// - Windows 10/11: [`windows::WindowsCfDrive`] (native `CfApi` sparse placeholders)
+/// - Arch Linux / Linux: [`linux::LinuxFuseDrive`] (`fuser` unprivileged FUSE3 mount)
+/// - Other platforms: [`MockDrive`] fallback
+#[must_use]
+pub fn create_platform_drive(backend: Arc<dyn VfsBackend>) -> Arc<dyn VirtualDrive> {
+    #[cfg(target_os = "windows")]
+    {
+        Arc::new(windows::WindowsCfDrive::new(backend))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Arc::new(linux::LinuxFuseDrive::new(backend))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        Arc::new(MockDrive::new(backend))
+    }
+}
+
 /// Cross-platform virtual drive test harness delegating directly to a [`VfsBackend`].
 pub struct MockDrive {
     backend: Arc<dyn VfsBackend>,
@@ -121,10 +142,7 @@ mod tests {
 
         drive.pin_path("/report.bin").await.expect("pin");
         assert!(drive.dehydrate_path("/report.bin").await.is_err());
-        assert_eq!(
-            backend.getattr(rec.inode).await.expect("attr").pinned,
-            true
-        );
+        assert!(backend.getattr(rec.inode).await.expect("attr").pinned);
 
         drive.unmount().await.expect("unmount");
         assert!(!drive.is_mounted());

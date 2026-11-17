@@ -62,6 +62,51 @@ pub struct VaultStatusReport {
     pub conflict_count: usize,
 }
 
+/// Parameters for registering a remote cloud backend over local IPC.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AddRemoteParams {
+    /// Backend identifier.
+    pub id: String,
+    /// Provider kind (`gdrive`, `onedrive`, `dropbox`, `s3`, `webdav`, `fs`).
+    pub kind: String,
+    /// Remote prefix / local directory path / bucket.
+    pub root: String,
+    /// Optional S3/WebDAV endpoint URL.
+    pub endpoint: Option<String>,
+    /// Optional bucket name.
+    pub bucket: Option<String>,
+    /// Optional region.
+    pub region: Option<String>,
+    /// Optional quota cap in bytes.
+    pub quota_limit_bytes: Option<u64>,
+    /// Routing policy name (`targeted`, `mirrored`, `pooled`).
+    pub policy: Option<String>,
+    /// Optional prefix rule for targeted routing.
+    pub prefix: Option<String>,
+    /// Optional non-OAuth access key / username.
+    pub username: Option<String>,
+    /// Optional non-OAuth secret (stored in OS keyring, never logged).
+    pub secret: Option<String>,
+}
+
+impl std::fmt::Debug for AddRemoteParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AddRemoteParams")
+            .field("id", &self.id)
+            .field("kind", &self.kind)
+            .field("root", &self.root)
+            .field("endpoint", &self.endpoint)
+            .field("bucket", &self.bucket)
+            .field("region", &self.region)
+            .field("quota_limit_bytes", &self.quota_limit_bytes)
+            .field("policy", &self.policy)
+            .field("prefix", &self.prefix)
+            .field("username", &self.username)
+            .field("secret", &self.secret.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
+}
+
 /// IPC request frame sent by `zv` CLI and `zerovault-ui` Tauri tray app to `zerovaultd`.
 ///
 /// Passphrases and secret fields are transmitted ONLY over OS-authenticated local IPC
@@ -83,30 +128,7 @@ pub enum DaemonRequest {
     /// Immediately lock the vault and zeroize all keys in RAM.
     LockVault,
     /// Register a remote cloud backend.
-    AddRemote {
-        /// Backend identifier.
-        id: String,
-        /// Provider kind (`gdrive`, `onedrive`, `dropbox`, `s3`, `webdav`, `fs`).
-        kind: String,
-        /// Remote prefix / local directory path / bucket.
-        root: String,
-        /// Optional S3/WebDAV endpoint URL.
-        endpoint: Option<String>,
-        /// Optional bucket name.
-        bucket: Option<String>,
-        /// Optional region.
-        region: Option<String>,
-        /// Optional quota cap in bytes.
-        quota_limit_bytes: Option<u64>,
-        /// Routing policy name (`targeted`, `mirrored`, `pooled`).
-        policy: Option<String>,
-        /// Optional prefix rule for targeted routing.
-        prefix: Option<String>,
-        /// Optional non-OAuth access key / username.
-        username: Option<String>,
-        /// Optional non-OAuth secret (stored in OS keyring, never logged).
-        secret: Option<String>,
-    },
+    AddRemote(Box<AddRemoteParams>),
     /// List configured remote backends and quotas.
     ListRemotes,
     /// Mount the virtual drive at `mount_point`.
@@ -141,10 +163,10 @@ impl std::fmt::Debug for DaemonRequest {
             Self::InitVault { .. } => f.write_str("DaemonRequest::InitVault([REDACTED])"),
             Self::UnlockVault { .. } => f.write_str("DaemonRequest::UnlockVault([REDACTED])"),
             Self::LockVault => f.write_str("DaemonRequest::LockVault"),
-            Self::AddRemote { id, kind, .. } => f
+            Self::AddRemote(params) => f
                 .debug_struct("DaemonRequest::AddRemote")
-                .field("id", id)
-                .field("kind", kind)
+                .field("id", &params.id)
+                .field("kind", &params.kind)
                 .field("secret", &"[REDACTED]")
                 .finish(),
             Self::ListRemotes => f.write_str("DaemonRequest::ListRemotes"),
