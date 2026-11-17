@@ -3,478 +3,686 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Zerovault</title>
-    <style>
-      :root {
-        --bg: #0b0f17;
-        --panel: #131a26;
-        --panel-alt: #182233;
-        --border: #243147;
-        --text: #e5ecf6;
-        --muted: #8b9bb4;
-        --accent: #38bdf8;
-        --accent-2: #22d3ee;
-        --ok: #10b981;
-        --warn: #f59e0b;
-        --danger: #ef4444;
-      }
-
-      * {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-      }
-
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
-        background: var(--bg);
-        color: var(--text);
-        font-size: 13px;
-        line-height: 1.4;
-        padding: 14px;
-        user-select: none;
-      }
-
-      .container {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-
-      .header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding-bottom: 8px;
-        border-bottom: 1px solid var(--border);
-      }
-
-      .brand {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-weight: 700;
-        font-size: 15px;
-        letter-spacing: 0.2px;
-      }
-
-      .brand-dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background: var(--accent);
-        box-shadow: 0 0 10px var(--accent);
-      }
-
-      .pill {
-        font-size: 11px;
-        font-weight: 600;
-        padding: 3px 8px;
-        border-radius: 999px;
-        background: var(--panel-alt);
-        border: 1px solid var(--border);
-        color: var(--muted);
-      }
-
-      .pill.ok {
-        color: var(--ok);
-        border-color: rgba(16, 185, 129, 0.35);
-        background: rgba(16, 185, 129, 0.12);
-      }
-
-      .pill.warn {
-        color: var(--warn);
-        border-color: rgba(245, 158, 11, 0.35);
-        background: rgba(245, 158, 11, 0.12);
-      }
-
-      .pill.danger {
-        color: var(--danger);
-        border-color: rgba(239, 68, 68, 0.35);
-        background: rgba(239, 68, 68, 0.12);
-      }
-
-      .card {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 10px 12px;
-      }
-
-      .card-title {
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.7px;
-        color: var(--muted);
-        margin-bottom: 6px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-      }
-
-      .metrics-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 8px;
-      }
-
-      .metric-box {
-        background: var(--panel-alt);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 8px 10px;
-      }
-
-      .metric-label {
-        font-size: 11px;
-        color: var(--muted);
-      }
-
-      .metric-value {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        font-size: 14px;
-        font-weight: 600;
-        margin-top: 2px;
-        color: var(--text);
-      }
-
-      .up { color: var(--accent); }
-      .down { color: var(--ok); }
-
-      .progress-track {
-        width: 100%;
-        height: 8px;
-        background: #0e1420;
-        border: 1px solid var(--border);
-        border-radius: 999px;
-        overflow: hidden;
-        margin: 6px 0;
-      }
-
-      .progress-fill {
-        height: 100%;
-        width: 0%;
-        background: linear-gradient(90deg, var(--accent), var(--accent-2));
-        transition: width 0.25s ease;
-      }
-
-      .subtext {
-        font-size: 11px;
-        color: var(--muted);
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      }
-
-      .remotes-list {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        max-height: 132px;
-        overflow-y: auto;
-      }
-
-      .remote-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        background: var(--panel-alt);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 6px 8px;
-      }
-
-      .remote-left {
-        display: flex;
-        align-items: center;
-        gap: 7px;
-        min-width: 0;
-      }
-
-      .health-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        flex-shrink: 0;
-      }
-
-      .health-dot.ok { background: var(--ok); }
-      .health-dot.bad { background: var(--danger); }
-
-      .remote-name {
-        font-weight: 600;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      .kind-tag {
-        font-size: 10px;
-        text-transform: uppercase;
-        padding: 1px 5px;
-        border-radius: 4px;
-        background: #0e1524;
-        border: 1px solid var(--border);
-        color: var(--accent);
-      }
-
-      .actions {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 8px;
-        margin-top: 2px;
-      }
-
-      button {
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 8px 10px;
-        font-size: 12px;
-        font-weight: 600;
-        cursor: pointer;
-        color: var(--text);
-        background: var(--panel-alt);
-        transition: background 0.15s ease, border-color 0.15s ease;
-      }
-
-      button:hover:not(:disabled) {
-        border-color: var(--accent);
-        background: #1d2a3f;
-      }
-
-      button.primary {
-        background: rgba(56, 189, 248, 0.16);
-        border-color: rgba(56, 189, 248, 0.45);
-        color: #e0f2fe;
-      }
-
-      button.danger {
-        background: rgba(239, 68, 68, 0.14);
-        border-color: rgba(239, 68, 68, 0.45);
-        color: #fee2e2;
-      }
-
-      button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-
-      .banner {
-        font-size: 11px;
-        padding: 6px 8px;
-        border-radius: 6px;
-        background: rgba(239, 68, 68, 0.12);
-        border: 1px solid rgba(239, 68, 68, 0.35);
-        color: #fecaca;
-        display: none;
-      }
-
-      .banner.info {
-        background: rgba(56, 189, 248, 0.12);
-        border-color: rgba(56, 189, 248, 0.35);
-        color: #bae6fd;
-      }
-    </style>
+    <title>Zerovault — Zero-Knowledge Multi-Cloud Drive</title>
+    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main class="container">
-      <header class="header">
-        <div class="brand">
-          <span class="brand-dot" id="brandDot"></span>
-          <span>Zerovault</span>
-        </div>
-        <span class="pill" id="syncPill">Connecting...</span>
-      </header>
-
-      <div id="banner" class="banner"></div>
-
-      <section class="card">
-        <div class="card-title">
-          <span>Live Throughput</span>
-          <span id="metaInfo" class="subtext">rev 0</span>
-        </div>
-        <div class="metrics-grid">
-          <div class="metric-box">
-            <div class="metric-label">Upload</div>
-            <div class="metric-value up" id="uploadRate">0 B/s</div>
+    <div id="appShell" class="app-shell">
+      <!-- Connecting Splash (shown briefly before first status response) -->
+      <section id="connectingView" class="auth-backdrop">
+        <div class="auth-card auth-card-compact">
+          <div class="auth-brand">
+            <div class="logo-mark">ZV</div>
+            <div>
+              <h1>Zerovault</h1>
+              <p class="muted">Connecting to local encryption engine...</p>
+            </div>
           </div>
-          <div class="metric-box">
-            <div class="metric-label">Download</div>
-            <div class="metric-value down" id="downloadRate">0 B/s</div>
+          <div id="offlineAlert" class="alert alert-danger hidden"></div>
+          <div class="auth-actions-row">
+            <button id="retryConnectBtn" class="btn btn-primary" type="button">Retry Connection</button>
           </div>
         </div>
       </section>
 
-      <section class="card">
-        <div class="card-title">
-          <span>Pooled Cloud Quota</span>
-          <span id="policyLabel" class="subtext">Unconfigured</span>
+      <!-- Auth / Onboarding View (shown when vault is uninitialized or locked) -->
+      <section id="authView" class="auth-backdrop hidden">
+        <div class="auth-card">
+          <div class="auth-header">
+            <div class="auth-brand">
+              <div class="logo-mark">ZV</div>
+              <div>
+                <h1>Zerovault</h1>
+                <p id="authSubtitle" class="muted">Zero-knowledge multi-cloud virtual filesystem</p>
+              </div>
+            </div>
+            <span id="authModeBadge" class="pill pill-info">Embedded Engine</span>
+          </div>
+
+          <div class="zk-notice">
+            <strong>Zero-Knowledge Guarantee:</strong> Plaintext filenames, directory trees, and
+            4 MiB file chunks are encrypted client-side with hardware-accelerated AES-256-GCM before
+            touching any cloud provider.
+          </div>
+
+          <div id="authHwStrip" class="hw-strip">
+            <span class="pill pill-ok">Checking hardware AES-NI / VAES...</span>
+          </div>
+
+          <div id="authErrorBanner" class="alert alert-danger hidden"></div>
+
+          <!-- Setup New Vault Form -->
+          <form id="initVaultForm" class="stack hidden">
+            <div class="field">
+              <label for="initPassInput">Master Vault Passphrase</label>
+              <div class="input-with-action">
+                <input
+                  id="initPassInput"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder="Enter a strong passphrase (min 12+ chars recommended)"
+                  required
+                />
+                <button id="toggleInitPassBtn" class="btn btn-ghost btn-sm" type="button">Show</button>
+              </div>
+              <div class="strength-row">
+                <div class="strength-track"><div id="passStrengthFill" class="strength-fill"></div></div>
+                <span id="passStrengthLabel" class="muted tiny">Enter passphrase</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="initPassConfirmInput">Confirm Master Passphrase</label>
+              <input
+                id="initPassConfirmInput"
+                type="password"
+                autocomplete="new-password"
+                placeholder="Re-enter passphrase"
+                required
+              />
+              <span id="passMatchHint" class="tiny muted">Derived locally via Argon2id (>= 64 MiB) + HKDF-SHA256</span>
+            </div>
+
+            <button id="initSubmitBtn" class="btn btn-primary btn-lg" type="submit">
+              Create &amp; Unlock Encrypted Vault
+            </button>
+          </form>
+
+          <!-- Unlock Existing Vault Form -->
+          <form id="unlockVaultForm" class="stack hidden">
+            <div class="vault-meta-row">
+              <span class="muted">Vault ID</span>
+              <code id="authVaultIdLabel" class="mono">--</code>
+            </div>
+
+            <div class="field">
+              <label for="unlockPassInput">Master Passphrase</label>
+              <div class="input-with-action">
+                <input
+                  id="unlockPassInput"
+                  type="password"
+                  autocomplete="current-password"
+                  placeholder="Enter your vault passphrase to unlock keys in RAM"
+                  required
+                />
+                <button id="toggleUnlockPassBtn" class="btn btn-ghost btn-sm" type="button">Show</button>
+              </div>
+            </div>
+
+            <button id="unlockSubmitBtn" class="btn btn-primary btn-lg" type="submit">
+              Unlock Vault
+            </button>
+          </form>
+
+          <div class="auth-footer">
+            <button id="authBenchBtn" class="btn btn-ghost btn-sm" type="button">
+              Verify Hardware Crypto Speed
+            </button>
+            <button id="authQuitBtn" class="btn btn-ghost btn-sm" type="button">
+              Quit Zerovault
+            </button>
+          </div>
+          <div id="authBenchResult" class="subcard hidden"></div>
         </div>
-        <div class="progress-track">
-          <div class="progress-fill" id="quotaBar"></div>
-        </div>
-        <div class="subtext" id="quotaSummary">No cloud quota configured</div>
       </section>
 
-      <section class="card">
-        <div class="card-title">
-          <span>Remote Accounts</span>
-          <span id="remoteCount" class="subtext">0</span>
-        </div>
-        <div class="remotes-list" id="remotesList">
-          <div class="subtext">No remotes configured.</div>
-        </div>
-      </section>
+      <!-- Main Desktop Workspace (shown once unlocked) -->
+      <div id="workspaceView" class="workspace hidden">
+        <aside class="sidebar">
+          <div class="sidebar-top">
+            <div class="sidebar-brand">
+              <div class="logo-mark">ZV</div>
+              <div>
+                <div class="brand-name">Zerovault</div>
+                <div id="sidebarEngineBadge" class="tiny muted">Embedded Engine</div>
+              </div>
+            </div>
 
-      <div class="actions">
-        <button class="primary" id="syncBtn" type="button">Sync Now</button>
-        <button class="danger" id="lockBtn" type="button">Lock Vault</button>
+            <nav class="nav-list" aria-label="Primary Navigation">
+              <button class="nav-item active" data-tab="files" type="button">
+                <span class="nav-icon">&#128193;</span>
+                <span>Vault Files</span>
+                <span id="navDirtyBadge" class="badge badge-warn hidden">0</span>
+              </button>
+              <button class="nav-item" data-tab="remotes" type="button">
+                <span class="nav-icon">&#9729;</span>
+                <span>Cloud Remotes</span>
+                <span id="navRemoteBadge" class="badge">0</span>
+              </button>
+              <button class="nav-item" data-tab="mount" type="button">
+                <span class="nav-icon">&#128190;</span>
+                <span>Virtual Drive</span>
+                <span id="navMountDot" class="status-dot"></span>
+              </button>
+              <button class="nav-item" data-tab="security" type="button">
+                <span class="nav-icon">&#128737;</span>
+                <span>Security &amp; Audit</span>
+                <span id="navConflictBadge" class="badge badge-danger hidden">0</span>
+              </button>
+            </nav>
+          </div>
+
+          <div class="sidebar-bottom">
+            <div class="sidebar-card">
+              <div class="sidebar-card-head">
+                <span class="tiny uppercase muted">Pooled Cloud Storage</span>
+                <span id="sidebarQuotaPct" class="tiny mono">0%</span>
+              </div>
+              <div class="progress-track">
+                <div id="sidebarQuotaFill" class="progress-fill"></div>
+              </div>
+              <div id="sidebarQuotaText" class="tiny muted mono">No cloud quota configured</div>
+            </div>
+
+            <div class="sidebar-card">
+              <div class="sidebar-card-head">
+                <span class="tiny uppercase muted">Live Throughput</span>
+                <span id="sidebarRevBadge" class="tiny mono">rev 0</span>
+              </div>
+              <div class="rates-inline">
+                <span id="sidebarUpRate" class="mono rate-up">&#9650; 0 B/s</span>
+                <span id="sidebarDownRate" class="mono rate-down">&#9660; 0 B/s</span>
+              </div>
+            </div>
+
+            <button id="quitAppBtn" class="btn btn-ghost btn-block" type="button">
+              Quit &amp; Zeroize Keys
+            </button>
+          </div>
+        </aside>
+
+        <div class="main-column">
+          <header class="topbar">
+            <div class="topbar-left">
+              <h2 id="viewTitle">Vault Files</h2>
+              <span id="syncStatusPill" class="pill pill-ok">Unlocked</span>
+              <span id="vaultIdPill" class="pill mono tiny" title="Vault UUID">--</span>
+            </div>
+            <div class="topbar-actions">
+              <button id="syncNowBtn" class="btn btn-primary" type="button">Sync Now</button>
+              <button id="lockVaultBtn" class="btn btn-danger" type="button">Lock Vault</button>
+            </div>
+          </header>
+
+          <main class="content-area">
+            <!-- Tab 1: Encrypted Vault File Browser -->
+            <section id="tab-files" class="tab-panel">
+              <div class="toolbar">
+                <div id="vaultBreadcrumbs" class="breadcrumbs"></div>
+                <div class="toolbar-actions">
+                  <input
+                    id="fileSearchInput"
+                    class="search-input"
+                    type="search"
+                    placeholder="Filter current folder..."
+                  />
+                  <button id="newFolderBtn" class="btn" type="button">+ New Folder</button>
+                  <button id="uploadFilesBtn" class="btn btn-primary" type="button">Upload Files</button>
+                  <button id="refreshFilesBtn" class="btn btn-ghost" type="button">Refresh</button>
+                </div>
+              </div>
+
+              <div id="noRemotesHint" class="alert alert-info hidden">
+                No cloud remotes connected yet. Files imported now are encrypted &amp; staged locally in
+                SQLite WAL; add a cloud account in <strong>Cloud Remotes</strong> to upload remotely.
+              </div>
+
+              <div id="dropZone" class="files-card">
+                <div id="dropOverlay" class="drop-overlay hidden">
+                  Drop local files or folders here to encrypt and upload in 4 MiB chunks
+                </div>
+                <div class="table-wrap">
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Size</th>
+                        <th>Modified</th>
+                        <th>Hydration State</th>
+                        <th class="align-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="filesTableBody"></tbody>
+                  </table>
+                </div>
+                <div id="filesEmptyState" class="empty-state hidden">
+                  <div class="empty-title">This folder is empty</div>
+                  <p class="muted">
+                    Drag &amp; drop local files into this window, click <strong>Upload Files</strong>, or create
+                    a folder. Every chunk is encrypted with AES-256-GCM before upload.
+                  </p>
+                  <div class="empty-actions">
+                    <button id="emptyUploadBtn" class="btn btn-primary" type="button">Upload Local Files</button>
+                    <button id="emptyFolderBtn" class="btn" type="button">Create Folder</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Tab 2: Cloud Remotes & Multi-Cloud Routing Studio -->
+            <section id="tab-remotes" class="tab-panel hidden">
+              <div class="section-header">
+                <div>
+                  <h3>Configured Cloud Accounts</h3>
+                  <p class="muted">
+                    Combine Google Drive, Microsoft OneDrive, Dropbox, S3-compatible buckets, WebDAV,
+                    and local encrypted folders behind unified zero-knowledge blobs.
+                  </p>
+                </div>
+                <button id="openAddRemoteBtn" class="btn btn-primary" type="button">+ Add Cloud Remote</button>
+              </div>
+
+              <div id="remotesGrid" class="remotes-grid"></div>
+
+              <div class="panel-card">
+                <div class="panel-head">
+                  <div>
+                    <h3>Multi-Cloud Routing Policy</h3>
+                    <p class="muted">
+                      Active policy: <strong id="activePolicySummary">Unconfigured</strong>
+                    </p>
+                  </div>
+                  <button id="applyPolicyBtn" class="btn btn-primary" type="button">Apply Policy</button>
+                </div>
+
+                <div class="policy-modes">
+                  <label class="mode-card">
+                    <input type="radio" name="policyMode" value="pooled" checked />
+                    <div>
+                      <strong>Quota-Pooled</strong>
+                      <p class="tiny muted">Spill across accounts automatically based on available quota.</p>
+                    </div>
+                  </label>
+                  <label class="mode-card">
+                    <input type="radio" name="policyMode" value="mirrored" />
+                    <div>
+                      <strong>Mirrored RAID-1</strong>
+                      <p class="tiny muted">Write encrypted chunks to 2+ clouds concurrently; read fastest.</p>
+                    </div>
+                  </label>
+                  <label class="mode-card">
+                    <input type="radio" name="policyMode" value="targeted" />
+                    <div>
+                      <strong>Targeted Prefix Rules</strong>
+                      <p class="tiny muted">Pin specific virtual folders to designated cloud accounts.</p>
+                    </div>
+                  </label>
+                </div>
+
+                <div id="policyConfigArea" class="policy-config-area">
+                  <div id="policyBackendsPicker" class="stack hidden">
+                    <label>Participating Cloud Backends</label>
+                    <div id="policyBackendsCheckboxes" class="checkbox-grid"></div>
+                    <div id="mirroredAckRow" class="inline-field hidden">
+                      <label for="mirroredMinAckInput">Minimum Replica Acknowledgements (min_ack)</label>
+                      <input id="mirroredMinAckInput" type="number" min="1" value="1" />
+                    </div>
+                  </div>
+
+                  <div id="targetedConfigPane" class="stack hidden">
+                    <div class="field">
+                      <label for="targetedDefaultSelect">Default Fallback Backend</label>
+                      <select id="targetedDefaultSelect"></select>
+                    </div>
+                    <div class="rules-head">
+                      <label>Folder Prefix Routing Rules</label>
+                      <button id="addPrefixRuleBtn" class="btn btn-sm" type="button">+ Add Prefix Rule</button>
+                    </div>
+                    <div id="targetedRulesList" class="rules-list"></div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Tab 3: Virtual Drive Mount Center -->
+            <section id="tab-mount" class="tab-panel hidden">
+              <div class="panel-card">
+                <div class="panel-head">
+                  <div>
+                    <h3>On-Demand Virtual Drive Mount</h3>
+                    <p class="muted">
+                      OS Driver: <strong id="platformDriverLabel">--</strong>
+                    </p>
+                  </div>
+                  <span id="mountStatusPill" class="pill">Unmounted</span>
+                </div>
+
+                <div class="stack">
+                  <div class="field">
+                    <label for="mountPathInput">Local Mount Point / Sync Root Directory</label>
+                    <div class="input-with-action">
+                      <input id="mountPathInput" type="text" placeholder="e.g. C:\Users\You\Zerovault" />
+                      <button id="browseMountBtn" class="btn" type="button">Browse...</button>
+                    </div>
+                  </div>
+
+                  <div class="field-row">
+                    <label class="checkbox-inline">
+                      <input id="useMockVfsCheckbox" type="checkbox" />
+                      <span>Use Virtual Sandbox Drive (MockDrive) instead of native kernel/FUSE integration</span>
+                    </label>
+                  </div>
+
+                  <div class="button-row">
+                    <button id="mountDriveBtn" class="btn btn-primary" type="button">Mount Virtual Drive</button>
+                    <button id="unmountDriveBtn" class="btn btn-danger" type="button">Unmount Drive</button>
+                    <button id="openMountFolderBtn" class="btn" type="button">Open in File Manager</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="metrics-cards">
+                <div class="stat-tile">
+                  <span class="stat-label">Hydrated Read</span>
+                  <strong id="statBytesRead" class="stat-value mono">0 B</strong>
+                </div>
+                <div class="stat-tile">
+                  <span class="stat-label">Virtual Writes</span>
+                  <strong id="statBytesWritten" class="stat-value mono">0 B</strong>
+                </div>
+                <div class="stat-tile">
+                  <span class="stat-label">4 MiB Chunks Hydrated</span>
+                  <strong id="statChunksHydrated" class="stat-value mono">0</strong>
+                </div>
+                <div class="stat-tile">
+                  <span class="stat-label">Cache Hits</span>
+                  <strong id="statCacheHits" class="stat-value mono">0</strong>
+                </div>
+                <div class="stat-tile">
+                  <span class="stat-label">Decrypted RAM Cache</span>
+                  <strong id="statRamCache" class="stat-value mono">0 B</strong>
+                </div>
+                <div class="stat-tile">
+                  <span class="stat-label">Pending Sync Queue</span>
+                  <strong id="statPendingDirty" class="stat-value mono">0 ops</strong>
+                </div>
+              </div>
+            </section>
+
+            <!-- Tab 4: Security, Hardware Crypto Benchmark & Conflict History -->
+            <section id="tab-security" class="tab-panel hidden">
+              <div class="panel-card">
+                <div class="panel-head">
+                  <div>
+                    <h3>Hardware-Accelerated Cryptography (CPUID Verified)</h3>
+                    <p id="secBackendLabel" class="muted">Inspecting CPU capabilities...</p>
+                  </div>
+                  <div class="button-row">
+                    <select id="benchSizeSelect">
+                      <option value="16">16 MiB</option>
+                      <option value="64" selected>64 MiB</option>
+                      <option value="128">128 MiB</option>
+                      <option value="256">256 MiB</option>
+                    </select>
+                    <button id="runBenchBtn" class="btn btn-primary" type="button">Run Benchmark</button>
+                  </div>
+                </div>
+
+                <div id="secCapsGrid" class="caps-grid"></div>
+
+                <div id="benchResultCard" class="bench-results hidden">
+                  <div class="bench-row">
+                    <div class="bench-label">
+                      <span>Encrypt (AES-256-GCM + 4 MiB AAD)</span>
+                      <strong id="benchEncRate" class="mono">0 MiB/s</strong>
+                    </div>
+                    <div class="progress-track"><div id="benchEncBar" class="progress-fill"></div></div>
+                  </div>
+                  <div class="bench-row">
+                    <div class="bench-label">
+                      <span>Decrypt + AEAD Verify</span>
+                      <strong id="benchDecRate" class="mono">0 MiB/s</strong>
+                    </div>
+                    <div class="progress-track"><div id="benchDecBar" class="progress-fill ok-fill"></div></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel-card">
+                <div class="panel-head">
+                  <div>
+                    <h3>Conflict Preservation Audit</h3>
+                    <p class="muted">
+                      Concurrent edits never overwrite silently; conflicting copies are saved deterministically.
+                    </p>
+                  </div>
+                  <button id="refreshConflictsBtn" class="btn btn-sm" type="button">Refresh Conflicts</button>
+                </div>
+                <div class="table-wrap">
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th>Original Virtual Path</th>
+                        <th>Preserved Conflict Copy</th>
+                        <th>Remote Revision</th>
+                        <th>Detected At</th>
+                      </tr>
+                    </thead>
+                    <tbody id="conflictsTableBody"></tbody>
+                  </table>
+                </div>
+                <div id="conflictsEmpty" class="empty-inline muted">No sync conflicts recorded.</div>
+              </div>
+            </section>
+          </main>
+        </div>
       </div>
-    </main>
+    </div>
 
-    <script>
-      const invoke = window.__TAURI__ && window.__TAURI__.core
-        ? window.__TAURI__.core.invoke
-        : null;
+    <!-- Modal: Add Cloud Remote -->
+    <div id="addRemoteModal" class="modal-backdrop hidden">
+      <div class="modal modal-lg">
+        <div class="modal-head">
+          <h3>Connect Cloud Storage Backend</h3>
+          <button id="closeAddRemoteBtn" class="btn btn-ghost btn-sm" type="button">&#10005;</button>
+        </div>
 
-      const syncPill = document.getElementById('syncPill');
-      const brandDot = document.getElementById('brandDot');
-      const banner = document.getElementById('banner');
-      const uploadRate = document.getElementById('uploadRate');
-      const downloadRate = document.getElementById('downloadRate');
-      const metaInfo = document.getElementById('metaInfo');
-      const quotaBar = document.getElementById('quotaBar');
-      const quotaSummary = document.getElementById('quotaSummary');
-      const policyLabel = document.getElementById('policyLabel');
-      const remoteCount = document.getElementById('remoteCount');
-      const remotesList = document.getElementById('remotesList');
-      const syncBtn = document.getElementById('syncBtn');
-      const lockBtn = document.getElementById('lockBtn');
+        <div id="providerTabs" class="provider-tabs">
+          <button class="provider-tab active" data-kind="fs" type="button">Local Folder</button>
+          <button class="provider-tab" data-kind="s3" type="button">S3-Compatible</button>
+          <button class="provider-tab" data-kind="webdav" type="button">WebDAV</button>
+          <button class="provider-tab" data-kind="gdrive" type="button">Google Drive</button>
+          <button class="provider-tab" data-kind="onedrive" type="button">OneDrive</button>
+          <button class="provider-tab" data-kind="dropbox" type="button">Dropbox</button>
+        </div>
 
-      function showBanner(msg, isInfo) {
-        if (!msg) {
-          banner.style.display = 'none';
-          banner.textContent = '';
-          banner.className = 'banner';
-          return;
-        }
-        banner.style.display = 'block';
-        banner.textContent = msg;
-        banner.className = isInfo ? 'banner info' : 'banner';
-      }
+        <form id="addRemoteForm" class="stack">
+          <div class="grid-2">
+            <div class="field">
+              <label for="remoteIdInput">Backend ID (unique label)</label>
+              <input id="remoteIdInput" type="text" placeholder="e.g. local-mirror, r2-main, gdrive-1" required />
+            </div>
+            <div class="field">
+              <label for="remoteQuotaInput">Quota Limit (MiB, optional)</label>
+              <input id="remoteQuotaInput" type="number" min="1" placeholder="e.g. 15360 for 15 GiB" />
+            </div>
+          </div>
 
-      function renderRemotes(remotes) {
-        remoteCount.textContent = String(remotes.length);
-        remotesList.replaceChildren();
-        if (!remotes.length) {
-          const empty = document.createElement('div');
-          empty.className = 'subtext';
-          empty.textContent = 'No remotes configured.';
-          remotesList.appendChild(empty);
-          return;
-        }
+          <div class="field">
+            <label id="remoteRootLabel" for="remoteRootInput">Local Storage Directory</label>
+            <div class="input-with-action">
+              <input id="remoteRootInput" type="text" placeholder="/path/to/encrypted-blobs" required />
+              <button id="browseRemoteRootBtn" class="btn" type="button">Browse...</button>
+            </div>
+          </div>
 
-        for (const r of remotes) {
-          const row = document.createElement('div');
-          row.className = 'remote-row';
-          if (r.last_error) {
-            row.title = r.last_error;
-          }
+          <!-- OAuth2 Provider Options (Google Drive / OneDrive / Dropbox) -->
+          <div id="oauthFields" class="stack hidden">
+            <div class="oauth-mode-switch">
+              <label class="checkbox-inline">
+                <input type="radio" name="oauthAuthMode" value="pkce" checked />
+                <span>Sign In via Browser (OAuth2 + S256 PKCE)</span>
+              </label>
+              <label class="checkbox-inline">
+                <input type="radio" name="oauthAuthMode" value="token" />
+                <span>Paste Access Token / Token JSON</span>
+              </label>
+            </div>
 
-          const left = document.createElement('div');
-          left.className = 'remote-left';
+            <div id="oauthPkceFields" class="stack">
+              <div class="grid-2">
+                <div class="field">
+                  <label for="oauthClientIdInput">OAuth2 Client ID</label>
+                  <input id="oauthClientIdInput" type="text" placeholder="Registered app Client ID" />
+                </div>
+                <div class="field">
+                  <label for="oauthClientSecretInput">Client Secret (if required)</label>
+                  <input id="oauthClientSecretInput" type="password" placeholder="Optional for PKCE public apps" />
+                </div>
+              </div>
+              <div class="grid-2">
+                <div class="field">
+                  <label for="oauthAuthUrlInput">Custom Auth URL (optional)</label>
+                  <input id="oauthAuthUrlInput" type="url" placeholder="Default provider endpoint" />
+                </div>
+                <div class="field">
+                  <label for="oauthTokenUrlInput">Custom Token URL (optional)</label>
+                  <input id="oauthTokenUrlInput" type="url" placeholder="Default provider endpoint" />
+                </div>
+              </div>
+            </div>
 
-          const dot = document.createElement('span');
-          dot.className = r.healthy ? 'health-dot ok' : 'health-dot bad';
+            <div id="oauthTokenFields" class="stack hidden">
+              <div class="field">
+                <label for="oauthRawTokenInput">Access Token or OAuth2 JSON Bundle</label>
+                <textarea
+                  id="oauthRawTokenInput"
+                  rows="3"
+                  placeholder='Paste bearer access token or {"access_token":"...","refresh_token":"..."}'
+                ></textarea>
+              </div>
+            </div>
+          </div>
 
-          const name = document.createElement('span');
-          name.className = 'remote-name';
-          name.textContent = r.id;
+          <!-- S3-Compatible Options -->
+          <div id="s3Fields" class="stack hidden">
+            <div class="grid-2">
+              <div class="field">
+                <label for="s3EndpointInput">S3 Endpoint URL</label>
+                <input id="s3EndpointInput" type="url" placeholder="https://s3.amazonaws.com or http://127.0.0.1:9000" />
+              </div>
+              <div class="field">
+                <label for="s3RegionInput">Region</label>
+                <input id="s3RegionInput" type="text" placeholder="us-east-1 or auto" />
+              </div>
+            </div>
+            <div class="grid-2">
+              <div class="field">
+                <label for="s3BucketInput">Bucket Name</label>
+                <input id="s3BucketInput" type="text" placeholder="my-zerovault-bucket" />
+              </div>
+              <div class="field">
+                <label for="s3AccessKeyInput">Access Key ID</label>
+                <input id="s3AccessKeyInput" type="text" placeholder="AKIA..." />
+              </div>
+            </div>
+            <div class="field">
+              <label for="s3SecretKeyInput">Secret Access Key (stored in OS Credential Vault)</label>
+              <input id="s3SecretKeyInput" type="password" placeholder="Enter S3 secret access key" />
+            </div>
+          </div>
 
-          const kind = document.createElement('span');
-          kind.className = 'kind-tag';
-          kind.textContent = r.kind;
+          <!-- WebDAV Options -->
+          <div id="webdavFields" class="stack hidden">
+            <div class="field">
+              <label for="davEndpointInput">WebDAV Server URL</label>
+              <input id="davEndpointInput" type="url" placeholder="https://cloud.example.com/remote.php/dav/files/user" />
+            </div>
+            <div class="grid-2">
+              <div class="field">
+                <label for="davUserInput">Username</label>
+                <input id="davUserInput" type="text" placeholder="WebDAV username" />
+              </div>
+              <div class="field">
+                <label for="davPassInput">Password / App Token</label>
+                <input id="davPassInput" type="password" placeholder="Stored wrapped in OS keyring" />
+              </div>
+            </div>
+          </div>
 
-          left.append(dot, name, kind);
+          <div class="grid-2">
+            <div class="field">
+              <label for="remotePolicySelect">Initial Placement Role</label>
+              <select id="remotePolicySelect">
+                <option value="pooled" selected>Quota-Pooled (Recommended)</option>
+                <option value="mirrored">Mirrored RAID-1</option>
+                <option value="targeted">Targeted Prefix</option>
+              </select>
+            </div>
+            <div id="remotePrefixField" class="field hidden">
+              <label for="remotePrefixInput">Targeted Folder Prefix</label>
+              <input id="remotePrefixInput" type="text" placeholder="/Backups" />
+            </div>
+          </div>
 
-          const right = document.createElement('span');
-          right.className = 'subtext';
-          right.textContent = `${r.latency_label} · ${r.quota_label}`;
+          <div class="modal-actions">
+            <button id="cancelAddRemoteBtn" class="btn btn-ghost" type="button">Cancel</button>
+            <button id="submitAddRemoteBtn" class="btn btn-primary" type="submit">Connect Backend</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
-          row.append(left, right);
-          remotesList.appendChild(row);
-        }
-      }
+    <!-- Modal: Built-In Local File / Folder Picker -->
+    <div id="pickerModal" class="modal-backdrop hidden">
+      <div class="modal modal-lg">
+        <div class="modal-head">
+          <h3 id="pickerTitle">Select Folder</h3>
+          <button id="closePickerBtn" class="btn btn-ghost btn-sm" type="button">&#10005;</button>
+        </div>
 
-      function renderStatus(vm) {
-        syncPill.textContent = vm.sync_state;
-        if (!vm.daemon_reachable) {
-          syncPill.className = 'pill danger';
-          brandDot.style.background = 'var(--danger)';
-        } else if (!vm.unlocked) {
-          syncPill.className = 'pill warn';
-          brandDot.style.background = 'var(--warn)';
-        } else {
-          syncPill.className = 'pill ok';
-          brandDot.style.background = 'var(--ok)';
-        }
+        <div class="picker-nav">
+          <button id="pickerUpBtn" class="btn btn-sm" type="button">Up</button>
+          <input id="pickerPathInput" type="text" />
+          <button id="pickerGoBtn" class="btn btn-sm" type="button">Go</button>
+          <button id="pickerNewDirBtn" class="btn btn-sm" type="button">+ New Folder</button>
+        </div>
 
-        uploadRate.textContent = vm.upload_rate;
-        downloadRate.textContent = vm.download_rate;
-        metaInfo.textContent = `rev ${vm.manifest_revision} · ${vm.pending_dirty_ops} dirty`;
-        policyLabel.textContent = vm.routing_policy;
-        quotaSummary.textContent = vm.quota_summary;
-        quotaBar.style.width = `${Math.min(100, Math.max(0, vm.quota_used_percent)).toFixed(1)}%`;
+        <div id="pickerNewDirBar" class="inline-create-bar hidden">
+          <input id="pickerNewDirNameInput" type="text" placeholder="New local folder name" />
+          <button id="pickerCreateDirConfirmBtn" class="btn btn-primary btn-sm" type="button">Create</button>
+          <button id="pickerCreateDirCancelBtn" class="btn btn-ghost btn-sm" type="button">Cancel</button>
+        </div>
 
-        syncBtn.disabled = !vm.daemon_reachable || !vm.unlocked;
-        lockBtn.disabled = !vm.daemon_reachable || !vm.unlocked;
+        <div class="picker-body">
+          <div id="pickerQuickRoots" class="picker-roots"></div>
+          <div id="pickerEntries" class="picker-entries"></div>
+        </div>
 
-        renderRemotes(vm.remotes || []);
-        if (vm.error_message) {
-          showBanner(vm.error_message, false);
-        } else {
-          showBanner(null, false);
-        }
-      }
+        <div class="modal-actions picker-footer">
+          <span id="pickerSelectionLabel" class="tiny muted mono"></span>
+          <div class="button-row">
+            <button id="pickerCancelBtn" class="btn btn-ghost" type="button">Cancel</button>
+            <button id="pickerConfirmBtn" class="btn btn-primary" type="button">Select</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
-      async function refreshStatus() {
-        if (!invoke) return;
-        try {
-          const vm = await invoke('fetch_status');
-          renderStatus(vm);
-        } catch (err) {
-          showBanner(String(err), false);
-        }
-      }
+    <!-- Modal: Generic Dialog (New Folder / Rename / Delete Confirm) -->
+    <div id="dialogModal" class="modal-backdrop hidden">
+      <div class="modal modal-sm">
+        <div class="modal-head">
+          <h3 id="dialogTitle">Dialog</h3>
+          <button id="closeDialogBtn" class="btn btn-ghost btn-sm" type="button">&#10005;</button>
+        </div>
+        <form id="dialogForm" class="stack">
+          <p id="dialogMessage" class="muted"></p>
+          <div id="dialogInputWrap" class="field">
+            <label id="dialogInputLabel" for="dialogInput">Name</label>
+            <input id="dialogInput" type="text" />
+          </div>
+          <div class="modal-actions">
+            <button id="dialogCancelBtn" class="btn btn-ghost" type="button">Cancel</button>
+            <button id="dialogConfirmBtn" class="btn btn-primary" type="submit">Confirm</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
-      syncBtn.addEventListener('click', async () => {
-        if (!invoke) return;
-        syncBtn.disabled = true;
-        try {
-          const msg = await invoke('sync_now');
-          showBanner(msg, true);
-          await refreshStatus();
-        } catch (err) {
-          showBanner(String(err), false);
-        } finally {
-          await refreshStatus();
-        }
-      });
+    <!-- Toast Container -->
+    <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-      lockBtn.addEventListener('click', async () => {
-        if (!invoke) return;
-        lockBtn.disabled = true;
-        try {
-          const msg = await invoke('lock_vault');
-          showBanner(msg, true);
-          await refreshStatus();
-        } catch (err) {
-          showBanner(String(err), false);
-        } finally {
-          await refreshStatus();
-        }
-      });
-
-      refreshStatus();
-      setInterval(refreshStatus, 1500);
-    </script>
+    <script src="app.js" defer></script>
   </body>
 </html>

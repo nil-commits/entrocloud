@@ -7084,6 +7084,9 @@ dependencies = [
 name = "zerovault-ui"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "dirs",
+ "parking_lot",
  "serde",
  "serde_json",
  "tauri",
@@ -7092,6 +7095,8 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+ "zerovault-crypto",
  "zerovault-daemon",
  "zerovault-types",
 ]

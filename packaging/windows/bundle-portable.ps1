@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Builds Windows release binaries for Zerovault and stages a portable .zip archive.
 #>
@@ -59,9 +59,13 @@ Zerovault Portable Distribution (Windows x86_64)
 Included binaries:
   - zerovaultd.exe    Background zero-knowledge sync & CfApi VFS daemon
   - zv.exe            Command-line client
-  - zerovault-ui.exe  System tray dashboard
+  - zerovault-ui.exe  Full desktop GUI + system tray app (auto-starts local engine)
 
-Quick start:
+Quick start (Desktop GUI — no terminal required):
+  1. Launch .\zerovault-ui.exe directly to open the onboarding wizard, add clouds,
+     upload/browse encrypted files, or mount Windows Cloud Files (CfApi).
+
+Quick start (Optional CLI / Background Daemon):
   1. Start the daemon in a terminal or background job:
        .\zerovaultd.exe
   2. Initialize or unlock your vault:

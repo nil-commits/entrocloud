@@ -38,7 +38,7 @@ High-performance, **zero-knowledge encrypted virtual filesystem** and **multi-cl
 | `crates/zerovault-core` | SQLite WAL store, `BoundedBufferPool`, `ChunkCache`, `ConflictResolver`, and streaming `SyncEngine` |
 | `crates/zerovault-daemon` | `zerovaultd` background daemon & length-prefixed local IPC (Windows Named Pipes / `0600` Unix Domain Sockets) |
 | `crates/zerovault-cli` | `zv` CLI (`init`, `unlock`, `lock`, `remote add/list`, `mount`, `unmount`, `pin`, `dehydrate`, `sync`, `status`, `bench-crypto`) |
-| `crates/zerovault-ui` | Tauri v2 system tray popup displaying live throughput, pooled cloud quotas, and one-click vault lock |
+| `crates/zerovault-ui` | Tauri v2 desktop GUI & system tray app (standalone auto-started engine, onboarding wizard, encrypted file manager, cloud & routing studio, mount center, hardware benchmark, conflict log) |
 | `tests/e2e` | Real-stack zero-knowledge end-to-end integration and adversarial security test suite |
 
 ---
@@ -68,6 +68,19 @@ cargo clippy --workspace --all-targets -- -D warnings
 # Run hardware-accelerated AES-256-GCM 4 MiB benchmark
 cargo run --release -p zerovault-cli -- bench-crypto --mib 64
 ```
+
+### Desktop GUI Application (No CLI Setup Required)
+
+```bash
+cargo run --release -p zerovault-ui
+```
+
+Launching `zerovault-ui` opens the full desktop workspace immediately and auto-starts an embedded `DaemonRuntime` (or attaches to a running `zerovaultd` over local IPC):
+- **Create / Unlock Vault:** Guided passphrase strength onboarding and Argon2id unlock gate.
+- **Vault Files:** Browse encrypted directories, drag-and-drop or upload local files in bounded 4 MiB chunks, export decrypted files, create/rename/delete entries, and manage Pin / Unpin / Dehydrate states.
+- **Cloud Remotes & Routing Studio:** Add/remove Google Drive / OneDrive / Dropbox (browser OAuth2 + PKCE loopback login or token import), S3-compatible buckets, WebDAV, and local folders; switch live between Quota-Pooled, Mirrored RAID-1, and Targeted prefix rules.
+- **Virtual Drive & Security:** Mount/unmount Windows `CfApi` / Linux `FUSE3` (or `MockDrive`), open mount folders in the OS file manager, run live CPUID `AES-256-GCM` benchmarks, and review non-destructive conflict history.
+- **System Tray:** Closing the window minimizes to the system tray (`Open Zerovault`, `Sync Now`, `Lock Vault`, `Quit Zerovault`).
 
 ### Quickstart CLI Workflow
 

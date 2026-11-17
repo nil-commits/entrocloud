@@ -11,8 +11,8 @@ pub mod wire;
 
 pub use error::{ZeroVaultError, ZeroVaultResult};
 pub use ipc::{
-    AddRemoteParams, DaemonRequest, DaemonResponse, MAX_IPC_FRAME_BYTES, RemoteAccountSummary,
-    ThroughputSnapshot, VaultStatusReport,
+    AddRemoteParams, DaemonRequest, DaemonResponse, MAX_IPC_FRAME_BYTES, OAuthLoginParams,
+    RemoteAccountSummary, ThroughputSnapshot, VaultEntrySummary, VaultStatusReport,
 };
 pub use traits::{
     BackendConfig, BackendHealth, BackendId, BackendKind, BackendQuota, BlobPlacement,

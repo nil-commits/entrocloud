@@ -5,30 +5,34 @@
 //! `zerovault_storage`, and `zerovault_vfs` so `Lead-Architect` can wire `zerovault_core`
 //! cleanly through [`SyncEngineFactory`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::Utc;
 use parking_lot::{Mutex as SyncMutex, RwLock as SyncRwLock};
 use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex as AsyncMutex, Notify, RwLock as AsyncRwLock};
 use uuid::Uuid;
+use zeroize::Zeroizing;
 use zerovault_core::{SqliteMetadataStore, SyncEngine, SyncEngineConfig};
 use zerovault_crypto::{AwsLcCryptoEngine, OsKeyringSecretStore};
 use zerovault_storage::{
-    CloudBackend, DEFAULT_TOKEN_SECRET_SERVICE, DEFAULT_UNBOUNDED_QUOTA_BYTES, OAuthProviderPreset,
-    OAuthTokenBundle, StorageRouter, persist_tokens,
+    CloudBackend, DEFAULT_TOKEN_SECRET_SERVICE, DEFAULT_UNBOUNDED_QUOTA_BYTES,
+    LoopbackOAuthListener, OAuthProviderConfig, OAuthProviderPreset, OAuthTokenBundle,
+    StorageRouter, persist_tokens,
 };
 use zerovault_types::mocks::{MockMetadataStore, MockVfsBackend};
 use zerovault_types::{
     AddRemoteParams, BackendConfig, BackendHealth, BackendId, BackendKind, BackendQuota,
-    BlobPlacement, CryptoEngine, DaemonRequest, DaemonResponse, DriveStats, KdfParams,
-    MetadataStore, RedactedSecret, RemoteAccountSummary, RemoteVersion, RoutingPolicy,
-    SecretStore, StorageRouterTrait, ThroughputSnapshot, VAULT_HEADER_LEN, VaultHeader,
+    BlobPlacement, CreateEntrySpec, CryptoEngine, DaemonRequest, DaemonResponse, DriveStats,
+    EntryKind, InodeId, KdfParams, MetadataStore, OAuthLoginParams, PLAINTEXT_CHUNK_SIZE,
+    RedactedSecret, RemoteAccountSummary, RemoteVersion, RoutingPolicy, SecretStore, SetAttrSpec,
+    StorageRouterTrait, ThroughputSnapshot, VAULT_HEADER_LEN, VaultEntrySummary, VaultHeader,
     VaultStatusReport, VfsBackend, VirtualDrive, ZeroVaultError, ZeroVaultResult,
 };
 use zerovault_vfs::{MockDrive, create_platform_drive};
@@ -714,11 +718,47 @@ impl DaemonRuntime {
             }
             DaemonRequest::LockVault => self.lock_vault().await,
             DaemonRequest::AddRemote(params) => self.add_remote(*params).await,
+            DaemonRequest::RemoveRemote { id } => self.remove_remote(&id).await,
+            DaemonRequest::SetRoutingPolicy { policy } => self.set_routing_policy(policy).await,
+            DaemonRequest::OAuthLogin(params) => self.oauth_login(*params).await,
             DaemonRequest::ListRemotes => self.list_remotes().await,
-            DaemonRequest::Mount { mount_point } => self.mount_drive(&mount_point).await,
+            DaemonRequest::Mount { mount_point } => {
+                self.mount_drive_with_options(&mount_point, None).await
+            }
+            DaemonRequest::MountWithOptions {
+                mount_point,
+                use_mock_vfs,
+            } => {
+                self.mount_drive_with_options(&mount_point, Some(use_mock_vfs))
+                    .await
+            }
             DaemonRequest::Unmount => self.unmount_drive().await,
             DaemonRequest::Pin { virtual_path } => self.pin_path(&virtual_path).await,
+            DaemonRequest::Unpin { virtual_path } => self.unpin_path(&virtual_path).await,
             DaemonRequest::Dehydrate { virtual_path } => self.dehydrate_path(&virtual_path).await,
+            DaemonRequest::ListDirectory { virtual_path } => {
+                self.list_directory(&virtual_path).await
+            }
+            DaemonRequest::CreateDirectory { virtual_path } => {
+                self.create_directory(&virtual_path).await
+            }
+            DaemonRequest::ImportLocalFile {
+                local_path,
+                virtual_dest_path,
+            } => self.import_local_file(&local_path, &virtual_dest_path).await,
+            DaemonRequest::ExportVaultFile {
+                virtual_path,
+                local_dest_path,
+            } => self.export_vault_file(&virtual_path, &local_dest_path).await,
+            DaemonRequest::DeleteEntry {
+                virtual_path,
+                recursive,
+            } => self.delete_entry(&virtual_path, recursive).await,
+            DaemonRequest::RenameEntry {
+                virtual_path,
+                new_virtual_path,
+            } => self.rename_entry(&virtual_path, &new_virtual_path).await,
+            DaemonRequest::ListConflicts => self.list_conflicts().await,
             DaemonRequest::SyncNow => self.sync_now().await,
             DaemonRequest::Status => self.status().await,
             DaemonRequest::Shutdown => {
@@ -940,6 +980,237 @@ impl DaemonRuntime {
         })
     }
 
+    async fn remove_remote(&self, id: &str) -> ZeroVaultResult<DaemonResponse> {
+        let trimmed = id.trim();
+        if trimmed.is_empty() {
+            return Err(ZeroVaultError::ConfigError(
+                "remote backend id must not be empty".into(),
+            ));
+        }
+
+        let _guard = self.lifecycle_lock.lock().await;
+        let mut cfg = self.remotes_config.read().await.clone();
+        let Some(pos) = cfg.remotes.iter().position(|r| r.id == trimmed) else {
+            return Err(ZeroVaultError::StorageNotFound(format!(
+                "remote backend '{trimmed}' not found"
+            )));
+        };
+        cfg.remotes.remove(pos);
+
+        let acct_key = format!("remote:{trimmed}");
+        let _ = self
+            .secret_store
+            .delete_secret(&self.config.secret_service, &acct_key)
+            .await;
+
+        if cfg.remotes.is_empty() {
+            cfg.routing_policy = None;
+        } else {
+            let remaining_ids: Vec<String> = cfg.remotes.iter().map(|r| r.id.clone()).collect();
+            cfg.routing_policy = cfg.routing_policy.take().map(|policy| match policy {
+                RoutingPolicy::QuotaPooled { mut pool_backends } => {
+                    pool_backends.retain(|b| b != trimmed);
+                    if pool_backends.is_empty() {
+                        pool_backends = remaining_ids;
+                    }
+                    RoutingPolicy::QuotaPooled { pool_backends }
+                }
+                RoutingPolicy::Mirrored {
+                    mut backends,
+                    min_ack,
+                } => {
+                    backends.retain(|b| b != trimmed);
+                    if backends.is_empty() {
+                        backends = remaining_ids;
+                    }
+                    let clamped_ack = min_ack.clamp(1, backends.len().max(1));
+                    RoutingPolicy::Mirrored {
+                        backends,
+                        min_ack: clamped_ack,
+                    }
+                }
+                RoutingPolicy::Targeted {
+                    mut prefix_routes,
+                    default_backend,
+                } => {
+                    prefix_routes.retain(|(_, b)| b != trimmed);
+                    let next_default = if default_backend == trimmed {
+                        remaining_ids[0].clone()
+                    } else {
+                        default_backend
+                    };
+                    RoutingPolicy::Targeted {
+                        prefix_routes,
+                        default_backend: next_default,
+                    }
+                }
+            });
+        }
+
+        let built_router = if self.crypto.is_unlocked() {
+            self.build_concrete_router(&cfg, true).await?
+        } else {
+            None
+        };
+
+        persist_remotes_config(&self.config.remotes_config_path, &cfg)?;
+        *self.remotes_config.write().await = cfg.clone();
+
+        if self.crypto.is_unlocked() {
+            self.storage_router
+                .set_router(built_router, cfg.routing_policy.clone());
+        } else {
+            self.storage_router
+                .set_router(None, cfg.routing_policy.clone());
+        }
+
+        tracing::info!(remote_id = %trimmed, "removed remote storage backend");
+        Ok(DaemonResponse::Ok {
+            message: format!("remote '{trimmed}' removed"),
+        })
+    }
+
+    async fn set_routing_policy(&self, mut policy: RoutingPolicy) -> ZeroVaultResult<DaemonResponse> {
+        let _guard = self.lifecycle_lock.lock().await;
+        let mut cfg = self.remotes_config.read().await.clone();
+        if cfg.remotes.is_empty() {
+            return Err(ZeroVaultError::ConfigError(
+                "configure at least one remote backend before setting routing policy".into(),
+            ));
+        }
+
+        validate_routing_policy(&cfg.remotes, &mut policy)?;
+        cfg.routing_policy = Some(policy.clone());
+
+        let built_router = if self.crypto.is_unlocked() {
+            self.build_concrete_router(&cfg, true).await?
+        } else {
+            None
+        };
+
+        persist_remotes_config(&self.config.remotes_config_path, &cfg)?;
+        *self.remotes_config.write().await = cfg.clone();
+
+        if self.crypto.is_unlocked() {
+            self.storage_router
+                .set_router(built_router, cfg.routing_policy.clone());
+        } else {
+            self.storage_router
+                .set_router(None, cfg.routing_policy.clone());
+        }
+
+        tracing::info!("updated multi-cloud routing policy");
+        Ok(DaemonResponse::Ok {
+            message: "routing policy updated".to_owned(),
+        })
+    }
+
+    async fn oauth_login(&self, mut params: OAuthLoginParams) -> ZeroVaultResult<DaemonResponse> {
+        if !self.crypto.is_unlocked() {
+            return Err(ZeroVaultError::VaultLocked);
+        }
+
+        let client_secret = params
+            .client_secret
+            .take()
+            .filter(|s| !s.trim().is_empty())
+            .map(RedactedSecret::from);
+        let id = params.id.trim().to_owned();
+        if id.is_empty() {
+            return Err(ZeroVaultError::ConfigError(
+                "remote backend id must not be empty".into(),
+            ));
+        }
+        let client_id = params.client_id.trim().to_owned();
+        if client_id.is_empty() {
+            return Err(ZeroVaultError::ConfigError(
+                "OAuth2 client_id must not be empty".into(),
+            ));
+        }
+
+        let kind = parse_backend_kind(&params.kind)?;
+        let preset = OAuthProviderPreset::try_from(&kind)?;
+
+        {
+            let cfg = self.remotes_config.read().await;
+            if cfg.remotes.iter().any(|r| r.id == id) {
+                return Err(ZeroVaultError::AlreadyExists(format!(
+                    "remote backend '{id}' is already registered"
+                )));
+            }
+        }
+
+        let mut oauth_cfg = OAuthProviderConfig::for_preset(preset, client_id.clone(), client_secret);
+        if let Some(auth_url) = params
+            .auth_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let token_url = params
+                .token_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| preset.default_token_url());
+            oauth_cfg = oauth_cfg.with_endpoints(auth_url, token_url);
+        } else if let Some(token_url) = params
+            .token_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            oauth_cfg = oauth_cfg.with_endpoints(preset.default_auth_url(), token_url);
+        }
+
+        let listener = LoopbackOAuthListener::bind_ephemeral(oauth_cfg).await?;
+        if params.open_browser {
+            open_url_in_system_browser(listener.authorize_url().as_str())?;
+        }
+
+        let timeout = Duration::from_secs(params.timeout_secs.unwrap_or(180).clamp(5, 600));
+        let bundle = listener.wait_for_callback_and_exchange(timeout).await?;
+
+        if !self.crypto.is_unlocked() {
+            return Err(ZeroVaultError::VaultLocked);
+        }
+
+        let acct_key = format!("remote:{id}");
+        persist_tokens(
+            &bundle,
+            self.secret_store.as_ref(),
+            self.crypto.as_ref(),
+            &self.config.secret_service,
+            &acct_key,
+        )
+        .await?;
+
+        let reg_res = self
+            .add_remote(AddRemoteParams {
+                id: id.clone(),
+                kind: params.kind,
+                root: params.root,
+                endpoint: None,
+                bucket: None,
+                region: None,
+                quota_limit_bytes: params.quota_limit_bytes,
+                policy: params.policy,
+                prefix: params.prefix,
+                username: Some(client_id),
+                secret: None,
+            })
+            .await;
+
+        if let Err(err) = reg_res {
+            let _ = self
+                .secret_store
+                .delete_secret(&self.config.secret_service, &acct_key)
+                .await;
+            return Err(err);
+        }
+        reg_res
+    }
+
     async fn rebuild_storage_router(
         &self,
         cfg: &PersistedRemotesConfig,
@@ -1047,12 +1318,21 @@ impl DaemonRuntime {
         Ok(summaries)
     }
 
-    async fn mount_drive(&self, mount_point: &str) -> ZeroVaultResult<DaemonResponse> {
+    async fn mount_drive_with_options(
+        &self,
+        mount_point: &str,
+        use_mock_vfs: Option<bool>,
+    ) -> ZeroVaultResult<DaemonResponse> {
         let trimmed = mount_point.trim();
         if trimmed.is_empty() {
             return Err(ZeroVaultError::ConfigError(
                 "mount point path must not be empty".into(),
             ));
+        }
+
+        let mount_path = PathBuf::from(trimmed);
+        if !mount_path.exists() {
+            std::fs::create_dir_all(&mount_path)?;
         }
 
         let _guard = self.lifecycle_lock.lock().await;
@@ -1072,17 +1352,27 @@ impl DaemonRuntime {
             ));
         }
 
+        let effective_mock = use_mock_vfs.unwrap_or(self.config.use_mock_vfs);
         let drive = self
             .drive_factory
-            .create_drive(Arc::clone(&bundle.vfs), self.config.use_mock_vfs)
+            .create_drive(Arc::clone(&bundle.vfs), effective_mock)
             .await?;
-        drive.mount(PathBuf::from(trimmed)).await?;
+        drive.mount(mount_path).await?;
         *drive_guard = Some(drive);
 
-        tracing::info!(use_mock_vfs = self.config.use_mock_vfs, "virtual drive mounted");
+        tracing::info!(use_mock_vfs = effective_mock, "virtual drive mounted");
         Ok(DaemonResponse::Ok {
             message: format!("mounted at {trimmed}"),
         })
+    }
+
+    async fn notify_active_drive(&self, virtual_path: &str) {
+        let drive = self.active_drive.lock().await.clone();
+        if let Some(d) = drive
+            && d.is_mounted()
+        {
+            let _ = d.notify_change(virtual_path).await;
+        }
     }
 
     async fn unmount_drive(&self) -> ZeroVaultResult<DaemonResponse> {
@@ -1126,6 +1416,422 @@ impl DaemonRuntime {
         Ok(DaemonResponse::Ok {
             message: "entry pinned offline".to_owned(),
         })
+    }
+
+    async fn unpin_path(&self, virtual_path: &str) -> ZeroVaultResult<DaemonResponse> {
+        let norm = normalize_vault_virtual_path(virtual_path)?;
+        let bundle = self
+            .sync_bundle
+            .read()
+            .await
+            .clone()
+            .ok_or(ZeroVaultError::VaultLocked)?;
+
+        let rec = bundle.vfs.resolve_path(&norm).await?;
+        bundle.vfs.unpin(rec.inode).await?;
+
+        tracing::info!("cleared offline pin on virtual entry");
+        Ok(DaemonResponse::Ok {
+            message: "entry unpinned".to_owned(),
+        })
+    }
+
+    async fn list_directory(&self, virtual_path: &str) -> ZeroVaultResult<DaemonResponse> {
+        let raw = if virtual_path.trim().is_empty() {
+            "/"
+        } else {
+            virtual_path
+        };
+        let norm = normalize_vault_virtual_path(raw)?;
+        let bundle = self
+            .sync_bundle
+            .read()
+            .await
+            .clone()
+            .ok_or(ZeroVaultError::VaultLocked)?;
+
+        let dir = bundle.vfs.resolve_path(&norm).await?;
+        if dir.kind != EntryKind::Directory {
+            return Err(ZeroVaultError::NotADirectory(dir.inode));
+        }
+
+        let mut children = bundle.vfs.readdir(dir.inode).await?;
+        children.sort_by(|a, b| {
+            (a.kind != EntryKind::Directory, a.name.to_ascii_lowercase(), &a.name).cmp(&(
+                b.kind != EntryKind::Directory,
+                b.name.to_ascii_lowercase(),
+                &b.name,
+            ))
+        });
+
+        let entries = children
+            .into_iter()
+            .map(|r| VaultEntrySummary {
+                inode: r.inode,
+                name: r.name,
+                virtual_path: r.virtual_path,
+                kind: r.kind,
+                size: r.size,
+                hydration: r.hydration,
+                pinned: r.pinned,
+                version: r.version,
+                modified_at: r.modified_at,
+            })
+            .collect();
+
+        Ok(DaemonResponse::DirectoryEntries {
+            virtual_path: norm,
+            entries,
+        })
+    }
+
+    async fn create_directory(&self, virtual_path: &str) -> ZeroVaultResult<DaemonResponse> {
+        let bundle = self
+            .sync_bundle
+            .read()
+            .await
+            .clone()
+            .ok_or(ZeroVaultError::VaultLocked)?;
+        let (parent_path, name) = split_parent_and_name(virtual_path)?;
+        let parent = bundle.vfs.resolve_path(&parent_path).await?;
+        if parent.kind != EntryKind::Directory {
+            return Err(ZeroVaultError::NotADirectory(parent.inode));
+        }
+
+        let created = bundle.vfs.mkdir(parent.inode, &name, 0o755).await?;
+        self.notify_active_drive(&created.virtual_path).await;
+
+        tracing::info!("created virtual directory");
+        Ok(DaemonResponse::Ok {
+            message: "directory created".to_owned(),
+        })
+    }
+
+    async fn import_local_file(
+        &self,
+        local_path: &str,
+        virtual_dest_path: &str,
+    ) -> ZeroVaultResult<DaemonResponse> {
+        let bundle = self
+            .sync_bundle
+            .read()
+            .await
+            .clone()
+            .ok_or(ZeroVaultError::VaultLocked)?;
+
+        let trimmed_local = local_path.trim();
+        if trimmed_local.is_empty() {
+            return Err(ZeroVaultError::ConfigError(
+                "source local file path must not be empty".into(),
+            ));
+        }
+
+        let meta = tokio::fs::metadata(trimmed_local).await?;
+        if !meta.is_file() {
+            return Err(ZeroVaultError::ConfigError(
+                "source local path is not a regular file".into(),
+            ));
+        }
+
+        let local_name = Path::new(trimmed_local)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .filter(|s| !s.is_empty() && *s != "." && *s != "..")
+            .ok_or_else(|| {
+                ZeroVaultError::InvalidPath("source file name is invalid or non-UTF-8".into())
+            })?
+            .to_owned();
+
+        let dest_raw = if virtual_dest_path.trim().is_empty() {
+            "/"
+        } else {
+            virtual_dest_path
+        };
+        let dest_norm = normalize_vault_virtual_path(dest_raw)?;
+
+        let (parent_path, file_name) = if dest_norm == "/" {
+            ("/".to_owned(), local_name)
+        } else {
+            match bundle.vfs.resolve_path(&dest_norm).await {
+                Ok(existing) if existing.kind == EntryKind::Directory => (dest_norm, local_name),
+                _ => split_parent_and_name(&dest_norm)?,
+            }
+        };
+
+        let parent = bundle.vfs.resolve_path(&parent_path).await?;
+        if parent.kind != EntryKind::Directory {
+            return Err(ZeroVaultError::NotADirectory(parent.inode));
+        }
+
+        let inode = match bundle.vfs.lookup(parent.inode, &file_name).await {
+            Ok(existing) => {
+                if existing.kind == EntryKind::Directory {
+                    return Err(ZeroVaultError::IsADirectory(existing.inode));
+                }
+                bundle
+                    .vfs
+                    .setattr(
+                        existing.inode,
+                        SetAttrSpec {
+                            size: Some(0),
+                            mode: None,
+                            modified_at: Some(Utc::now()),
+                        },
+                    )
+                    .await?
+                    .inode
+            }
+            Err(ZeroVaultError::InodeNotFound(_)) => {
+                bundle
+                    .vfs
+                    .create_entry(CreateEntrySpec {
+                        parent_inode: parent.inode,
+                        name: file_name.clone(),
+                        mode: 0o644,
+                    })
+                    .await?
+                    .inode
+            }
+            Err(err) => return Err(err),
+        };
+
+        let mut src = tokio::fs::File::open(trimmed_local).await?;
+        let mut chunk_buf = Zeroizing::new(vec![0u8; PLAINTEXT_CHUNK_SIZE]);
+        let mut offset = 0u64;
+
+        loop {
+            let mut filled = 0usize;
+            while filled < chunk_buf.len() {
+                let n = src.read(&mut chunk_buf[filled..]).await?;
+                if n == 0 {
+                    break;
+                }
+                filled += n;
+            }
+            if filled == 0 {
+                break;
+            }
+            bundle
+                .vfs
+                .write_range(inode, offset, &chunk_buf[..filled])
+                .await?;
+            offset = offset.saturating_add(filled as u64);
+            if filled < chunk_buf.len() {
+                break;
+            }
+        }
+
+        let has_remotes = !self.remotes_config.read().await.remotes.is_empty();
+        let mut uploaded_immediately = false;
+        if has_remotes || bundle.sync_runner.is_none() {
+            match bundle.vfs.flush(inode).await {
+                Ok(()) => {
+                    uploaded_immediately = true;
+                }
+                Err(
+                    err @ (ZeroVaultError::VaultLocked
+                    | ZeroVaultError::CryptoTamperDetected(_)),
+                ) => {
+                    return Err(err);
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        code = error_code(&err),
+                        "remote upload deferred; chunk data staged locally"
+                    );
+                }
+            }
+        }
+
+        let target_vpath = join_virtual_path(&parent.virtual_path, &file_name);
+        self.notify_active_drive(&target_vpath).await;
+
+        tracing::info!(bytes = offset, uploaded_immediately, "imported local file into vault");
+        let message = if uploaded_immediately {
+            format!("encrypted & uploaded {offset} bytes")
+        } else {
+            format!("encrypted & staged {offset} bytes locally (sync pending)")
+        };
+        Ok(DaemonResponse::Ok { message })
+    }
+
+    async fn export_vault_file(
+        &self,
+        virtual_path: &str,
+        local_dest_path: &str,
+    ) -> ZeroVaultResult<DaemonResponse> {
+        let bundle = self
+            .sync_bundle
+            .read()
+            .await
+            .clone()
+            .ok_or(ZeroVaultError::VaultLocked)?;
+
+        let norm = normalize_vault_virtual_path(virtual_path)?;
+        let rec = bundle.vfs.resolve_path(&norm).await?;
+        if rec.kind != EntryKind::File {
+            return Err(ZeroVaultError::IsADirectory(rec.inode));
+        }
+
+        let trimmed_dest = local_dest_path.trim();
+        if trimmed_dest.is_empty() {
+            return Err(ZeroVaultError::ConfigError(
+                "local destination path must not be empty".into(),
+            ));
+        }
+        if rec.name.is_empty()
+            || rec.name == "."
+            || rec.name == ".."
+            || rec.name.contains('/')
+            || rec.name.contains('\\')
+            || rec.name.contains('\0')
+        {
+            return Err(ZeroVaultError::InvalidPath(
+                "vault entry contains invalid export filename characters".into(),
+            ));
+        }
+
+        let candidate = PathBuf::from(trimmed_dest);
+        let dest_path = if candidate.is_dir() {
+            candidate.join(&rec.name)
+        } else {
+            candidate
+        };
+        if let Some(parent_dir) = dest_path.parent()
+            && !parent_dir.as_os_str().is_empty()
+            && !parent_dir.exists()
+        {
+            tokio::fs::create_dir_all(parent_dir).await?;
+        }
+
+        let mut dst = tokio::fs::File::create(&dest_path).await?;
+        let mut offset = 0u64;
+        while offset < rec.size {
+            let read_len = ((rec.size - offset) as usize).min(PLAINTEXT_CHUNK_SIZE);
+            let bytes = bundle.vfs.read_range(rec.inode, offset, read_len).await?;
+            if bytes.is_empty() {
+                break;
+            }
+            dst.write_all(&bytes).await?;
+            offset = offset.saturating_add(bytes.len() as u64);
+        }
+        dst.flush().await?;
+
+        tracing::info!(bytes = offset, "verified and exported vault file to disk");
+        Ok(DaemonResponse::Ok {
+            message: format!("verified & exported {offset} bytes"),
+        })
+    }
+
+    async fn delete_entry(
+        &self,
+        virtual_path: &str,
+        recursive: bool,
+    ) -> ZeroVaultResult<DaemonResponse> {
+        let bundle = self
+            .sync_bundle
+            .read()
+            .await
+            .clone()
+            .ok_or(ZeroVaultError::VaultLocked)?;
+
+        let (parent_path, name) = split_parent_and_name(virtual_path)?;
+        let parent = bundle.vfs.resolve_path(&parent_path).await?;
+        let entry = bundle.vfs.lookup(parent.inode, &name).await?;
+
+        match entry.kind {
+            EntryKind::File => {
+                bundle.vfs.unlink(parent.inode, &name).await?;
+            }
+            EntryKind::Directory => {
+                if recursive {
+                    delete_dir_contents_iterative(bundle.vfs.as_ref(), entry.inode).await?;
+                }
+                bundle.vfs.rmdir(parent.inode, &name).await?;
+            }
+        }
+
+        self.notify_active_drive(&entry.virtual_path).await;
+        tracing::info!(recursive, "deleted virtual entry");
+        Ok(DaemonResponse::Ok {
+            message: "entry deleted".to_owned(),
+        })
+    }
+
+    async fn rename_entry(
+        &self,
+        virtual_path: &str,
+        new_virtual_path: &str,
+    ) -> ZeroVaultResult<DaemonResponse> {
+        let bundle = self
+            .sync_bundle
+            .read()
+            .await
+            .clone()
+            .ok_or(ZeroVaultError::VaultLocked)?;
+
+        let (old_parent_path, old_name) = split_parent_and_name(virtual_path)?;
+        let old_parent = bundle.vfs.resolve_path(&old_parent_path).await?;
+
+        let trimmed_new = new_virtual_path.trim();
+        if trimmed_new.is_empty() || trimmed_new.contains('\0') {
+            return Err(ZeroVaultError::InvalidPath(
+                "destination name or path must not be empty or contain NUL".into(),
+            ));
+        }
+
+        let (new_parent_path, new_name) =
+            if !trimmed_new.contains('/') && !trimmed_new.contains('\\') {
+                if trimmed_new == "." || trimmed_new == ".." {
+                    return Err(ZeroVaultError::InvalidPath(
+                        "entry name cannot be '.' or '..'".into(),
+                    ));
+                }
+                (old_parent_path, trimmed_new.to_owned())
+            } else {
+                split_parent_and_name(trimmed_new)?
+            };
+
+        let src = bundle.vfs.lookup(old_parent.inode, &old_name).await?;
+        let new_parent = bundle.vfs.resolve_path(&new_parent_path).await?;
+        if new_parent.kind != EntryKind::Directory {
+            return Err(ZeroVaultError::NotADirectory(new_parent.inode));
+        }
+        if src.kind == EntryKind::Directory {
+            let prefix = if src.virtual_path == "/" {
+                "/".to_owned()
+            } else {
+                format!("{}/", src.virtual_path)
+            };
+            if new_parent.inode == src.inode || new_parent.virtual_path.starts_with(&prefix) {
+                return Err(ZeroVaultError::InvalidPath(
+                    "cannot move a directory inside itself".into(),
+                ));
+            }
+        }
+
+        let updated = bundle
+            .vfs
+            .rename(old_parent.inode, &old_name, new_parent.inode, &new_name)
+            .await?;
+        self.notify_active_drive(&updated.virtual_path).await;
+
+        tracing::info!("renamed virtual entry");
+        Ok(DaemonResponse::Ok {
+            message: "entry renamed".to_owned(),
+        })
+    }
+
+    async fn list_conflicts(&self) -> ZeroVaultResult<DaemonResponse> {
+        let bundle = self
+            .sync_bundle
+            .read()
+            .await
+            .clone()
+            .ok_or(ZeroVaultError::VaultLocked)?;
+        let mut conflicts = bundle.metadata.list_conflicts().await?;
+        conflicts.sort_by(|a, b| b.detected_at.cmp(&a.detected_at));
+        Ok(DaemonResponse::Conflicts(conflicts))
     }
 
     async fn dehydrate_path(&self, virtual_path: &str) -> ZeroVaultResult<DaemonResponse> {
@@ -1487,6 +2193,173 @@ pub fn normalize_vault_virtual_path(raw: &str) -> ZeroVaultResult<String> {
     } else {
         Ok(format!("/{}", parts.join("/")))
     }
+}
+
+fn split_parent_and_name(raw: &str) -> ZeroVaultResult<(String, String)> {
+    let norm = normalize_vault_virtual_path(raw)?;
+    if norm == "/" {
+        return Err(ZeroVaultError::InvalidPath(
+            "operation cannot target the root '/' directory".into(),
+        ));
+    }
+    let idx = norm
+        .rfind('/')
+        .ok_or_else(|| ZeroVaultError::InvalidPath("invalid normalized virtual path".into()))?;
+    let parent = if idx == 0 {
+        "/".to_owned()
+    } else {
+        norm[..idx].to_owned()
+    };
+    let name = norm[idx + 1..].to_owned();
+    if name.is_empty() || name == "." || name == ".." {
+        return Err(ZeroVaultError::InvalidPath(
+            "entry name must be non-empty and not '.' or '..'".into(),
+        ));
+    }
+    Ok((parent, name))
+}
+
+fn join_virtual_path(parent_virtual_path: &str, name: &str) -> String {
+    if parent_virtual_path == "/" {
+        format!("/{name}")
+    } else {
+        format!("{parent_virtual_path}/{name}")
+    }
+}
+
+async fn delete_dir_contents_iterative(
+    vfs: &dyn VfsBackend,
+    root_dir_inode: InodeId,
+) -> ZeroVaultResult<()> {
+    let mut stack: Vec<(InodeId, bool)> = vec![(root_dir_inode, false)];
+    while let Some((dir_inode, expanded)) = stack.pop() {
+        let children = vfs.readdir(dir_inode).await?;
+        if expanded || children.is_empty() {
+            for child in children {
+                match child.kind {
+                    EntryKind::File => vfs.unlink(dir_inode, &child.name).await?,
+                    EntryKind::Directory => vfs.rmdir(dir_inode, &child.name).await?,
+                }
+            }
+        } else {
+            let mut subdirs = Vec::new();
+            for child in children {
+                match child.kind {
+                    EntryKind::File => vfs.unlink(dir_inode, &child.name).await?,
+                    EntryKind::Directory => subdirs.push(child.inode),
+                }
+            }
+            if !subdirs.is_empty() {
+                stack.push((dir_inode, true));
+                for sub in subdirs {
+                    stack.push((sub, false));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_routing_policy(
+    remotes: &[PersistedRemoteEntry],
+    policy: &mut RoutingPolicy,
+) -> ZeroVaultResult<()> {
+    let id_set: HashSet<&str> = remotes.iter().map(|r| r.id.as_str()).collect();
+    match policy {
+        RoutingPolicy::Targeted {
+            prefix_routes,
+            default_backend,
+        } => {
+            if !id_set.contains(default_backend.as_str()) {
+                return Err(ZeroVaultError::ConfigError(format!(
+                    "targeted default backend '{default_backend}' is not registered"
+                )));
+            }
+            for (prefix, backend) in prefix_routes.iter_mut() {
+                *prefix = normalize_vault_virtual_path(prefix)?;
+                if !id_set.contains(backend.as_str()) {
+                    return Err(ZeroVaultError::ConfigError(format!(
+                        "targeted route backend '{backend}' is not registered"
+                    )));
+                }
+            }
+        }
+        RoutingPolicy::Mirrored { backends, min_ack } => {
+            if backends.is_empty() {
+                return Err(ZeroVaultError::ConfigError(
+                    "mirrored policy must include at least one backend".into(),
+                ));
+            }
+            for b in backends.iter() {
+                if !id_set.contains(b.as_str()) {
+                    return Err(ZeroVaultError::ConfigError(format!(
+                        "mirrored backend '{b}' is not registered"
+                    )));
+                }
+            }
+            if *min_ack == 0 || *min_ack > backends.len() {
+                return Err(ZeroVaultError::ConfigError(format!(
+                    "mirrored min_ack ({min_ack}) must be between 1 and {}",
+                    backends.len()
+                )));
+            }
+        }
+        RoutingPolicy::QuotaPooled { pool_backends } => {
+            if pool_backends.is_empty() {
+                return Err(ZeroVaultError::ConfigError(
+                    "quota-pooled policy must include at least one backend".into(),
+                ));
+            }
+            for b in pool_backends.iter() {
+                if !id_set.contains(b.as_str()) {
+                    return Err(ZeroVaultError::ConfigError(format!(
+                        "pooled backend '{b}' is not registered"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn open_url_in_system_browser(raw_url: &str) -> ZeroVaultResult<()> {
+    if !raw_url.starts_with("https://") && !raw_url.starts_with("http://") {
+        return Err(ZeroVaultError::OAuthError(
+            "refusing to launch non-HTTP(S) authorization URL".into(),
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", raw_url])
+            .spawn()
+            .map_err(|err| {
+                ZeroVaultError::OAuthError(format!("failed launching browser: {err}"))
+            })?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(raw_url)
+            .spawn()
+            .map_err(|err| {
+                ZeroVaultError::OAuthError(format!("failed launching browser: {err}"))
+            })?;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(raw_url)
+            .spawn()
+            .map_err(|err| {
+                ZeroVaultError::OAuthError(format!("failed launching browser: {err}"))
+            })?;
+    }
+
+    Ok(())
 }
 
 fn ensure_state_dir(dir: &Path) -> ZeroVaultResult<()> {

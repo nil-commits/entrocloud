@@ -8,5 +8,5 @@ Exec=/usr/bin/zerovault-ui
 Icon=zerovault
 Terminal=false
 Categories=Utility;Security;Network;FileTools;
-StartupNotify=false
+StartupNotify=true
 X-GNOME-Autostart-enabled=true

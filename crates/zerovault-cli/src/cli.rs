@@ -352,6 +352,31 @@ fn render_daemon_response(
                 write_status_report(stdout, &report)
             }
         }
+        DaemonResponse::DirectoryEntries {
+            virtual_path,
+            entries,
+        } => {
+            writeln!(stdout, "Directory {virtual_path} ({} entries):", entries.len())
+                .context("failed writing output")?;
+            for entry in entries {
+                writeln!(stdout, "  {:?} {} ({} B)", entry.kind, entry.name, entry.size)
+                    .context("failed writing output")?;
+            }
+            Ok(())
+        }
+        DaemonResponse::Conflicts(conflicts) => {
+            writeln!(stdout, "Conflicts ({}):", conflicts.len())
+                .context("failed writing output")?;
+            for c in conflicts {
+                writeln!(
+                    stdout,
+                    "  {} -> {} (rev {})",
+                    c.original_path, c.conflict_path, c.remote_revision
+                )
+                .context("failed writing output")?;
+            }
+            Ok(())
+        }
         DaemonResponse::Error { code, message } => {
             bail!("[{code}] {message}");
         }

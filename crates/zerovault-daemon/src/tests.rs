@@ -11,8 +11,9 @@ use uuid::Uuid;
 use zerovault_crypto::AwsLcCryptoEngine;
 use zerovault_types::mocks::{InMemorySecretStore, MockCryptoEngine, MockMetadataStore, MockVfsBackend};
 use zerovault_types::{
-    AddRemoteParams, DaemonRequest, DaemonResponse, HydrationState, MAX_IPC_FRAME_BYTES,
-    ROOT_INODE, VfsBackend, ZeroVaultError,
+    AddRemoteParams, ConflictRecord, DaemonRequest, DaemonResponse, EntryKind, HydrationState,
+    MAX_IPC_FRAME_BYTES, MetadataStore, OAuthLoginParams, ROOT_INODE, RoutingPolicy, SecretStore,
+    VfsBackend, ZeroVaultError,
 };
 
 use crate::{
@@ -560,4 +561,399 @@ async fn default_runtime_wires_core_sync_engine_and_sqlite_wal() {
 
     let lock = runtime.handle_request(DaemonRequest::LockVault).await;
     assert!(matches!(lock, DaemonResponse::Ok { .. }));
+}
+
+#[tokio::test]
+async fn gui_file_manager_remote_policy_and_conflict_rpcs_end_to_end() {
+    let tmp = TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let cloud_a = tmp.path().join("cloud_a");
+    let cloud_b = tmp.path().join("cloud_b");
+    let auto_mount_dir = tmp.path().join("auto_created_mount");
+    let src_file = tmp.path().join("payload_5mib.bin");
+    let exported_file = tmp.path().join("exported/payload_out.bin");
+
+    // 5 MiB deterministic payload spanning two encrypted 4 MiB chunks.
+    let payload: Vec<u8> = (0usize..(5 * 1024 * 1024 + 137))
+        .map(|i| ((i.wrapping_mul(31)) ^ (i >> 8)) as u8)
+        .collect();
+    std::fs::write(&src_file, &payload).expect("write 5 MiB fixture");
+
+    let secret_store = Arc::new(InMemorySecretStore::default());
+    let cfg = DaemonStateConfig::new(state_dir.clone()).with_mock_vfs(false);
+    let runtime = Arc::new(
+        DaemonRuntime::builder(cfg)
+            .with_crypto(Arc::new(MockCryptoEngine::default()))
+            .with_secret_store(Arc::clone(&secret_store) as Arc<dyn SecretStore>)
+            .build()
+            .expect("runtime"),
+    );
+
+    // Lock mock crypto engine first, then verify OAuthLogin rejects cleanly while locked.
+    assert!(matches!(
+        runtime.handle_request(DaemonRequest::LockVault).await,
+        DaemonResponse::Ok { .. }
+    ));
+    let oauth_locked = runtime
+        .handle_request(DaemonRequest::OAuthLogin(Box::new(OAuthLoginParams {
+            id: "gdrive-1".to_owned(),
+            kind: "gdrive".to_owned(),
+            root: "/zerovault".to_owned(),
+            client_id: "client-id".to_owned(),
+            client_secret: Some("super-oauth-client-secret".to_owned()),
+            auth_url: None,
+            token_url: None,
+            quota_limit_bytes: None,
+            policy: None,
+            prefix: None,
+            timeout_secs: Some(5),
+            open_browser: false,
+        })))
+        .await;
+    assert!(matches!(
+        oauth_locked,
+        DaemonResponse::Error { ref code, .. } if code == "vault_locked"
+    ));
+
+    // Init vault
+    let init = runtime
+        .handle_request(DaemonRequest::InitVault {
+            passphrase: "desktop-gui-passphrase".to_owned(),
+        })
+        .await;
+    assert!(matches!(init, DaemonResponse::Ok { .. }));
+
+    // Add two local-fs cloud remotes
+    for (id, dir) in [("cloud-a", &cloud_a), ("cloud-b", &cloud_b)] {
+        let resp = runtime
+            .handle_request(DaemonRequest::AddRemote(Box::new(AddRemoteParams {
+                id: id.to_owned(),
+                kind: "fs".to_owned(),
+                root: dir.to_string_lossy().into_owned(),
+                endpoint: None,
+                bucket: None,
+                region: None,
+                quota_limit_bytes: Some(64 * 1024 * 1024),
+                policy: Some("pooled".to_owned()),
+                prefix: None,
+                username: None,
+                secret: None,
+            })))
+            .await;
+        assert!(matches!(resp, DaemonResponse::Ok { .. }));
+    }
+
+    // Create nested virtual directories
+    assert!(matches!(
+        runtime
+            .handle_request(DaemonRequest::CreateDirectory {
+                virtual_path: "/Projects".to_owned(),
+            })
+            .await,
+        DaemonResponse::Ok { .. }
+    ));
+    assert!(matches!(
+        runtime
+            .handle_request(DaemonRequest::CreateDirectory {
+                virtual_path: "/Projects/Sub".to_owned(),
+            })
+            .await,
+        DaemonResponse::Ok { .. }
+    ));
+
+    // Import 5 MiB file into /Projects
+    let import_resp = runtime
+        .handle_request(DaemonRequest::ImportLocalFile {
+            local_path: src_file.to_string_lossy().into_owned(),
+            virtual_dest_path: "/Projects".to_owned(),
+        })
+        .await;
+    assert!(matches!(import_resp, DaemonResponse::Ok { .. }));
+
+    // List /Projects directory
+    let list_resp = runtime
+        .handle_request(DaemonRequest::ListDirectory {
+            virtual_path: "/Projects".to_owned(),
+        })
+        .await;
+    match list_resp {
+        DaemonResponse::DirectoryEntries {
+            virtual_path,
+            entries,
+        } => {
+            assert_eq!(virtual_path, "/Projects");
+            assert_eq!(entries.len(), 2);
+            // Directories sorted before files
+            assert_eq!(entries[0].kind, EntryKind::Directory);
+            assert_eq!(entries[0].name, "Sub");
+            assert_eq!(entries[1].kind, EntryKind::File);
+            assert_eq!(entries[1].name, "payload_5mib.bin");
+            assert_eq!(entries[1].size, payload.len() as u64);
+        }
+        other => panic!("expected DirectoryEntries, got {other:?}"),
+    }
+
+    // Pin -> Unpin -> Dehydrate -> Export byte-for-byte verified
+    assert!(matches!(
+        runtime
+            .handle_request(DaemonRequest::Pin {
+                virtual_path: "/Projects/payload_5mib.bin".to_owned(),
+            })
+            .await,
+        DaemonResponse::Ok { .. }
+    ));
+    assert!(matches!(
+        runtime
+            .handle_request(DaemonRequest::Unpin {
+                virtual_path: "/Projects/payload_5mib.bin".to_owned(),
+            })
+            .await,
+        DaemonResponse::Ok { .. }
+    ));
+    assert!(matches!(
+        runtime
+            .handle_request(DaemonRequest::Dehydrate {
+                virtual_path: "/Projects/payload_5mib.bin".to_owned(),
+            })
+            .await,
+        DaemonResponse::Ok { .. }
+    ));
+
+    // Rename in place and re-verify export hydrates cleanly from encrypted cloud chunks
+    assert!(matches!(
+        runtime
+            .handle_request(DaemonRequest::RenameEntry {
+                virtual_path: "/Projects/payload_5mib.bin".to_owned(),
+                new_virtual_path: "renamed_payload.bin".to_owned(),
+            })
+            .await,
+        DaemonResponse::Ok { .. }
+    ));
+    let export_resp = runtime
+        .handle_request(DaemonRequest::ExportVaultFile {
+            virtual_path: "/Projects/renamed_payload.bin".to_owned(),
+            local_dest_path: exported_file.to_string_lossy().into_owned(),
+        })
+        .await;
+    assert!(matches!(export_resp, DaemonResponse::Ok { .. }));
+    let read_back = std::fs::read(&exported_file).expect("read exported 5 MiB");
+    assert_eq!(read_back, payload);
+
+    // Switch routing policy to Mirrored RAID-1, then Targeted, then reject unknown backend
+    assert!(matches!(
+        runtime
+            .handle_request(DaemonRequest::SetRoutingPolicy {
+                policy: RoutingPolicy::Mirrored {
+                    backends: vec!["cloud-a".to_owned(), "cloud-b".to_owned()],
+                    min_ack: 2,
+                },
+            })
+            .await,
+        DaemonResponse::Ok { .. }
+    ));
+    assert!(matches!(
+        runtime
+            .handle_request(DaemonRequest::SetRoutingPolicy {
+                policy: RoutingPolicy::Targeted {
+                    prefix_routes: vec![("/Projects".to_owned(), "cloud-a".to_owned())],
+                    default_backend: "cloud-b".to_owned(),
+                },
+            })
+            .await,
+        DaemonResponse::Ok { .. }
+    ));
+    assert!(matches!(
+        runtime
+            .handle_request(DaemonRequest::SetRoutingPolicy {
+                policy: RoutingPolicy::QuotaPooled {
+                    pool_backends: vec!["nonexistent".to_owned()],
+                },
+            })
+            .await,
+        DaemonResponse::Error { ref code, .. } if code == "invalid_config"
+    ));
+
+    // Remove remote cloud-b and verify Targeted policy default fell back to cloud-a
+    assert!(matches!(
+        runtime
+            .handle_request(DaemonRequest::RemoveRemote {
+                id: "cloud-b".to_owned(),
+            })
+            .await,
+        DaemonResponse::Ok { .. }
+    ));
+    match runtime.handle_request(DaemonRequest::Status).await {
+        DaemonResponse::Status(report) => {
+            assert_eq!(report.remotes.len(), 1);
+            assert_eq!(report.remotes[0].id, "cloud-a");
+            assert_eq!(
+                report.routing_policy,
+                Some(RoutingPolicy::Targeted {
+                    prefix_routes: vec![("/Projects".to_owned(), "cloud-a".to_owned())],
+                    default_backend: "cloud-a".to_owned(),
+                })
+            );
+        }
+        other => panic!("expected Status, got {other:?}"),
+    }
+
+    // Recursive delete removes /Projects and its children
+    assert!(matches!(
+        runtime
+            .handle_request(DaemonRequest::DeleteEntry {
+                virtual_path: "/Projects".to_owned(),
+                recursive: true,
+            })
+            .await,
+        DaemonResponse::Ok { .. }
+    ));
+    match runtime
+        .handle_request(DaemonRequest::ListDirectory {
+            virtual_path: "/".to_owned(),
+        })
+        .await
+    {
+        DaemonResponse::DirectoryEntries { entries, .. } => assert!(entries.is_empty()),
+        other => panic!("expected empty root, got {other:?}"),
+    }
+
+    // MountWithOptions auto-creates mount directory & mounts MockDrive cleanly
+    assert!(!auto_mount_dir.exists());
+    assert!(matches!(
+        runtime
+            .handle_request(DaemonRequest::MountWithOptions {
+                mount_point: auto_mount_dir.to_string_lossy().into_owned(),
+                use_mock_vfs: true,
+            })
+            .await,
+        DaemonResponse::Ok { .. }
+    ));
+    assert!(auto_mount_dir.is_dir());
+    assert!(matches!(
+        runtime.handle_request(DaemonRequest::Unmount).await,
+        DaemonResponse::Ok { .. }
+    ));
+
+    // ListConflicts returns recorded conflicts sorted newest-first
+    let direct_meta = zerovault_core::SqliteMetadataStore::open(state_dir.join("metadata.db"))
+        .expect("open sqlite metadata");
+    let now = chrono::Utc::now();
+    direct_meta
+        .record_conflict(ConflictRecord {
+            original_path: "/a.txt".to_owned(),
+            conflict_path: "/a (conflict-dev-1).txt".to_owned(),
+            remote_revision: 1,
+            detected_at: now - chrono::Duration::seconds(10),
+        })
+        .await
+        .expect("record older conflict");
+    direct_meta
+        .record_conflict(ConflictRecord {
+            original_path: "/b.txt".to_owned(),
+            conflict_path: "/b (conflict-dev-2).txt".to_owned(),
+            remote_revision: 2,
+            detected_at: now,
+        })
+        .await
+        .expect("record newer conflict");
+    match runtime.handle_request(DaemonRequest::ListConflicts).await {
+        DaemonResponse::Conflicts(conflicts) => {
+            assert_eq!(conflicts.len(), 2);
+            assert_eq!(conflicts[0].original_path, "/b.txt");
+            assert_eq!(conflicts[1].original_path, "/a.txt");
+        }
+        other => panic!("expected Conflicts, got {other:?}"),
+    }
+
+    // OAuthLogin redaction + non-OAuth kind rejection
+    let oauth_dbg = format!(
+        "{:?}",
+        OAuthLoginParams {
+            id: "g1".to_owned(),
+            kind: "gdrive".to_owned(),
+            root: "/zv".to_owned(),
+            client_id: "cid".to_owned(),
+            client_secret: Some("super-secret-oauth-client".to_owned()),
+            auth_url: None,
+            token_url: None,
+            quota_limit_bytes: None,
+            policy: None,
+            prefix: None,
+            timeout_secs: None,
+            open_browser: false,
+        }
+    );
+    assert!(!oauth_dbg.contains("super-secret-oauth-client"));
+    assert!(matches!(
+        runtime
+            .handle_request(DaemonRequest::OAuthLogin(Box::new(OAuthLoginParams {
+                id: "s3-bad".to_owned(),
+                kind: "s3".to_owned(),
+                root: "/zv".to_owned(),
+                client_id: "cid".to_owned(),
+                client_secret: None,
+                auth_url: None,
+                token_url: None,
+                quota_limit_bytes: None,
+                policy: None,
+                prefix: None,
+                timeout_secs: Some(5),
+                open_browser: false,
+            })))
+            .await,
+        DaemonResponse::Error { ref code, .. } if code == "invalid_config"
+    ));
+
+    // Register a gdrive backend with token secret, then verify RemoveRemote cleans secret_store
+    let tok_json = serde_json::json!({
+        "access_token": "secret-access-token-123",
+        "refresh_token": "secret-refresh-token-456",
+        "client_id": "test-client"
+    })
+    .to_string();
+    assert!(matches!(
+        runtime
+            .handle_request(DaemonRequest::AddRemote(Box::new(AddRemoteParams {
+                id: "gdrive-tok".to_owned(),
+                kind: "gdrive".to_owned(),
+                root: "/zerovault".to_owned(),
+                endpoint: None,
+                bucket: None,
+                region: None,
+                quota_limit_bytes: None,
+                policy: None,
+                prefix: None,
+                username: Some("test-client".to_owned()),
+                secret: Some(tok_json),
+            })))
+            .await,
+        DaemonResponse::Ok { .. }
+    ));
+    assert!(
+        secret_store
+            .get_secret(&runtime.config().secret_service, "remote:gdrive-tok")
+            .await
+            .expect("get secret")
+            .is_some()
+    );
+    assert!(matches!(
+        runtime
+            .handle_request(DaemonRequest::RemoveRemote {
+                id: "gdrive-tok".to_owned(),
+            })
+            .await,
+        DaemonResponse::Ok { .. }
+    ));
+    assert!(
+        secret_store
+            .get_secret(&runtime.config().secret_service, "remote:gdrive-tok")
+            .await
+            .expect("get secret after remove")
+            .is_none()
+    );
+
+    assert!(matches!(
+        runtime.handle_request(DaemonRequest::LockVault).await,
+        DaemonResponse::Ok { .. }
+    ));
 }
