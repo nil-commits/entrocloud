@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Zerovault"
+    Manufacturer="cloud.entropy.rs"
+    Version="0.1.0.0"
+    UpgradeCode="9f4c63a1-6c2d-4a8e-9b1f-3e8a7d2c1045"
+    Scope="perUser"
+    Compressed="yes">
+
+    <SummaryInformation
+      Description="Zerovault Zero-Knowledge Multi-Cloud Virtual Drive"
+      Manufacturer="cloud.entropy.rs" />
+
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of Zerovault is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="ZerovaultIcon.ico" SourceFile="..\..\crates\zerovault-ui\icons\icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="ZerovaultIcon.ico" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ZerovaultRootDir" Name="Zerovault">
+        <Directory Id="BinDir" Name="bin" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ZerovaultMenuDir" Name="Zerovault" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="ProductComponents" Directory="BinDir">
+      <Component Id="ZerovaultDaemonExe" Guid="b7d1a832-2e6f-4d91-8a45-5f2b3c7d9e01">
+        <File Id="FileZerovaultdExe" Source="$(var.BinSourceDir)\zerovaultd.exe" />
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\cloud.entropy.rs\Zerovault"
+          Name="DaemonInstalled"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+
+      <Component Id="ZerovaultCliExe" Guid="c4e2b943-3f70-4e02-9b56-6a3c4d8e0f12">
+        <File Id="FileZvExe" Source="$(var.BinSourceDir)\zv.exe" />
+        <Environment
+          Id="ZerovaultUserPath"
+          Name="PATH"
+          Value="[BinDir]"
+          Permanent="no"
+          Part="last"
+          Action="set"
+          System="no" />
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\cloud.entropy.rs\Zerovault"
+          Name="CliInstalled"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+
+      <Component Id="ZerovaultUiExe" Guid="d5f3ca54-4081-4f13-ac67-7b4d5e9f1023">
+        <File Id="FileZerovaultUiExe" Source="$(var.BinSourceDir)\zerovault-ui.exe" />
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\cloud.entropy.rs\Zerovault"
+          Name="UiInstalled"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Component Id="ZerovaultStartMenuShortcut" Directory="ZerovaultMenuDir" Guid="e604db65-5192-4024-bd78-8c5e6fa02134">
+      <Shortcut
+        Id="StartMenuZerovaultUi"
+        Name="Zerovault"
+        Description="Zerovault Zero-Knowledge Multi-Cloud Tray Dashboard"
+        Target="[BinDir]zerovault-ui.exe"
+        WorkingDirectory="BinDir"
+        Icon="ZerovaultIcon.ico" />
+      <RemoveFolder Id="RemoveZerovaultMenuDir" On="uninstall" />
+      <RegistryValue
+        Root="HKCU"
+        Key="Software\cloud.entropy.rs\Zerovault"
+        Name="ShortcutInstalled"
+        Type="integer"
+        Value="1"
+        KeyPath="yes" />
+    </Component>
+
+    <Feature Id="MainFeature" Title="Zerovault" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentRef Id="ZerovaultStartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>

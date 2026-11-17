@@ -4,8 +4,477 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Zerovault</title>
+    <style>
+      :root {
+        --bg: #0b0f17;
+        --panel: #131a26;
+        --panel-alt: #182233;
+        --border: #243147;
+        --text: #e5ecf6;
+        --muted: #8b9bb4;
+        --accent: #38bdf8;
+        --accent-2: #22d3ee;
+        --ok: #10b981;
+        --warn: #f59e0b;
+        --danger: #ef4444;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        font-size: 13px;
+        line-height: 1.4;
+        padding: 14px;
+        user-select: none;
+      }
+
+      .container {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 700;
+        font-size: 15px;
+        letter-spacing: 0.2px;
+      }
+
+      .brand-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 10px var(--accent);
+      }
+
+      .pill {
+        font-size: 11px;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: var(--panel-alt);
+        border: 1px solid var(--border);
+        color: var(--muted);
+      }
+
+      .pill.ok {
+        color: var(--ok);
+        border-color: rgba(16, 185, 129, 0.35);
+        background: rgba(16, 185, 129, 0.12);
+      }
+
+      .pill.warn {
+        color: var(--warn);
+        border-color: rgba(245, 158, 11, 0.35);
+        background: rgba(245, 158, 11, 0.12);
+      }
+
+      .pill.danger {
+        color: var(--danger);
+        border-color: rgba(239, 68, 68, 0.35);
+        background: rgba(239, 68, 68, 0.12);
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+      }
+
+      .card-title {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.7px;
+        color: var(--muted);
+        margin-bottom: 6px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .metrics-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .metric-box {
+        background: var(--panel-alt);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+
+      .metric-label {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .metric-value {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 14px;
+        font-weight: 600;
+        margin-top: 2px;
+        color: var(--text);
+      }
+
+      .up { color: var(--accent); }
+      .down { color: var(--ok); }
+
+      .progress-track {
+        width: 100%;
+        height: 8px;
+        background: #0e1420;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        overflow: hidden;
+        margin: 6px 0;
+      }
+
+      .progress-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        transition: width 0.25s ease;
+      }
+
+      .subtext {
+        font-size: 11px;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      .remotes-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-height: 132px;
+        overflow-y: auto;
+      }
+
+      .remote-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: var(--panel-alt);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 6px 8px;
+      }
+
+      .remote-left {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+      }
+
+      .health-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      .health-dot.ok { background: var(--ok); }
+      .health-dot.bad { background: var(--danger); }
+
+      .remote-name {
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .kind-tag {
+        font-size: 10px;
+        text-transform: uppercase;
+        padding: 1px 5px;
+        border-radius: 4px;
+        background: #0e1524;
+        border: 1px solid var(--border);
+        color: var(--accent);
+      }
+
+      .actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 2px;
+      }
+
+      button {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        color: var(--text);
+        background: var(--panel-alt);
+        transition: background 0.15s ease, border-color 0.15s ease;
+      }
+
+      button:hover:not(:disabled) {
+        border-color: var(--accent);
+        background: #1d2a3f;
+      }
+
+      button.primary {
+        background: rgba(56, 189, 248, 0.16);
+        border-color: rgba(56, 189, 248, 0.45);
+        color: #e0f2fe;
+      }
+
+      button.danger {
+        background: rgba(239, 68, 68, 0.14);
+        border-color: rgba(239, 68, 68, 0.45);
+        color: #fee2e2;
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .banner {
+        font-size: 11px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        background: rgba(239, 68, 68, 0.12);
+        border: 1px solid rgba(239, 68, 68, 0.35);
+        color: #fecaca;
+        display: none;
+      }
+
+      .banner.info {
+        background: rgba(56, 189, 248, 0.12);
+        border-color: rgba(56, 189, 248, 0.35);
+        color: #bae6fd;
+      }
+    </style>
   </head>
   <body>
-    <main>Zerovault Wave-0 Placeholder</main>
+    <main class="container">
+      <header class="header">
+        <div class="brand">
+          <span class="brand-dot" id="brandDot"></span>
+          <span>Zerovault</span>
+        </div>
+        <span class="pill" id="syncPill">Connecting...</span>
+      </header>
+
+      <div id="banner" class="banner"></div>
+
+      <section class="card">
+        <div class="card-title">
+          <span>Live Throughput</span>
+          <span id="metaInfo" class="subtext">rev 0</span>
+        </div>
+        <div class="metrics-grid">
+          <div class="metric-box">
+            <div class="metric-label">Upload</div>
+            <div class="metric-value up" id="uploadRate">0 B/s</div>
+          </div>
+          <div class="metric-box">
+            <div class="metric-label">Download</div>
+            <div class="metric-value down" id="downloadRate">0 B/s</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-title">
+          <span>Pooled Cloud Quota</span>
+          <span id="policyLabel" class="subtext">Unconfigured</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="quotaBar"></div>
+        </div>
+        <div class="subtext" id="quotaSummary">No cloud quota configured</div>
+      </section>
+
+      <section class="card">
+        <div class="card-title">
+          <span>Remote Accounts</span>
+          <span id="remoteCount" class="subtext">0</span>
+        </div>
+        <div class="remotes-list" id="remotesList">
+          <div class="subtext">No remotes configured.</div>
+        </div>
+      </section>
+
+      <div class="actions">
+        <button class="primary" id="syncBtn" type="button">Sync Now</button>
+        <button class="danger" id="lockBtn" type="button">Lock Vault</button>
+      </div>
+    </main>
+
+    <script>
+      const invoke = window.__TAURI__ && window.__TAURI__.core
+        ? window.__TAURI__.core.invoke
+        : null;
+
+      const syncPill = document.getElementById('syncPill');
+      const brandDot = document.getElementById('brandDot');
+      const banner = document.getElementById('banner');
+      const uploadRate = document.getElementById('uploadRate');
+      const downloadRate = document.getElementById('downloadRate');
+      const metaInfo = document.getElementById('metaInfo');
+      const quotaBar = document.getElementById('quotaBar');
+      const quotaSummary = document.getElementById('quotaSummary');
+      const policyLabel = document.getElementById('policyLabel');
+      const remoteCount = document.getElementById('remoteCount');
+      const remotesList = document.getElementById('remotesList');
+      const syncBtn = document.getElementById('syncBtn');
+      const lockBtn = document.getElementById('lockBtn');
+
+      function showBanner(msg, isInfo) {
+        if (!msg) {
+          banner.style.display = 'none';
+          banner.textContent = '';
+          banner.className = 'banner';
+          return;
+        }
+        banner.style.display = 'block';
+        banner.textContent = msg;
+        banner.className = isInfo ? 'banner info' : 'banner';
+      }
+
+      function renderRemotes(remotes) {
+        remoteCount.textContent = String(remotes.length);
+        remotesList.replaceChildren();
+        if (!remotes.length) {
+          const empty = document.createElement('div');
+          empty.className = 'subtext';
+          empty.textContent = 'No remotes configured.';
+          remotesList.appendChild(empty);
+          return;
+        }
+
+        for (const r of remotes) {
+          const row = document.createElement('div');
+          row.className = 'remote-row';
+          if (r.last_error) {
+            row.title = r.last_error;
+          }
+
+          const left = document.createElement('div');
+          left.className = 'remote-left';
+
+          const dot = document.createElement('span');
+          dot.className = r.healthy ? 'health-dot ok' : 'health-dot bad';
+
+          const name = document.createElement('span');
+          name.className = 'remote-name';
+          name.textContent = r.id;
+
+          const kind = document.createElement('span');
+          kind.className = 'kind-tag';
+          kind.textContent = r.kind;
+
+          left.append(dot, name, kind);
+
+          const right = document.createElement('span');
+          right.className = 'subtext';
+          right.textContent = `${r.latency_label} · ${r.quota_label}`;
+
+          row.append(left, right);
+          remotesList.appendChild(row);
+        }
+      }
+
+      function renderStatus(vm) {
+        syncPill.textContent = vm.sync_state;
+        if (!vm.daemon_reachable) {
+          syncPill.className = 'pill danger';
+          brandDot.style.background = 'var(--danger)';
+        } else if (!vm.unlocked) {
+          syncPill.className = 'pill warn';
+          brandDot.style.background = 'var(--warn)';
+        } else {
+          syncPill.className = 'pill ok';
+          brandDot.style.background = 'var(--ok)';
+        }
+
+        uploadRate.textContent = vm.upload_rate;
+        downloadRate.textContent = vm.download_rate;
+        metaInfo.textContent = `rev ${vm.manifest_revision} · ${vm.pending_dirty_ops} dirty`;
+        policyLabel.textContent = vm.routing_policy;
+        quotaSummary.textContent = vm.quota_summary;
+        quotaBar.style.width = `${Math.min(100, Math.max(0, vm.quota_used_percent)).toFixed(1)}%`;
+
+        syncBtn.disabled = !vm.daemon_reachable || !vm.unlocked;
+        lockBtn.disabled = !vm.daemon_reachable || !vm.unlocked;
+
+        renderRemotes(vm.remotes || []);
+        if (vm.error_message) {
+          showBanner(vm.error_message, false);
+        } else {
+          showBanner(null, false);
+        }
+      }
+
+      async function refreshStatus() {
+        if (!invoke) return;
+        try {
+          const vm = await invoke('fetch_status');
+          renderStatus(vm);
+        } catch (err) {
+          showBanner(String(err), false);
+        }
+      }
+
+      syncBtn.addEventListener('click', async () => {
+        if (!invoke) return;
+        syncBtn.disabled = true;
+        try {
+          const msg = await invoke('sync_now');
+          showBanner(msg, true);
+          await refreshStatus();
+        } catch (err) {
+          showBanner(String(err), false);
+        } finally {
+          await refreshStatus();
+        }
+      });
+
+      lockBtn.addEventListener('click', async () => {
+        if (!invoke) return;
+        lockBtn.disabled = true;
+        try {
+          const msg = await invoke('lock_vault');
+          showBanner(msg, true);
+          await refreshStatus();
+        } catch (err) {
+          showBanner(String(err), false);
+        } finally {
+          await refreshStatus();
+        }
+      });
+
+      refreshStatus();
+      setInterval(refreshStatus, 1500);
+    </script>
   </body>
 </html>

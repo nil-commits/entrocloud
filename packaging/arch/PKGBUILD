@@ -1,0 +1,59 @@
+# Maintainer: cloud.entropy.rs <ops@cloud.entropy.rs>
+pkgname=zerovault
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Zero-knowledge multi-cloud encrypted virtual drive (daemon, CLI, and tray UI)"
+arch=('x86_64' 'aarch64')
+url="https://cloud.entropy.rs/zerovault"
+license=('MIT' 'Apache-2.0')
+depends=(
+  'fuse3'
+  'gtk3'
+  'libayatana-appindicator'
+  'libsecret'
+  'webkit2gtk-4.1'
+)
+makedepends=(
+  'cargo'
+  'cmake'
+  'nasm'
+  'pkgconf'
+  'rust'
+)
+source=("${pkgname}-${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "${srcdir}/${pkgname}-${pkgver}" || cd "${startdir}/../.."
+  export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}"
+  cargo fetch --locked --target "${CARCH}-unknown-linux-gnu" || true
+}
+
+build() {
+  cd "${srcdir}/${pkgname}-${pkgver}" || cd "${startdir}/../.."
+  export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}"
+  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+  cargo build --release --locked \
+    -p zerovault-daemon \
+    -p zerovault-cli \
+    -p zerovault-ui
+}
+
+package() {
+  cd "${srcdir}/${pkgname}-${pkgver}" || cd "${startdir}/../.."
+  local target_dir="${CARGO_TARGET_DIR:-target}/release"
+
+  install -Dm755 "${target_dir}/zerovaultd" "${pkgdir}/usr/bin/zerovaultd"
+  install -Dm755 "${target_dir}/zv" "${pkgdir}/usr/bin/zv"
+  install -Dm755 "${target_dir}/zerovault-ui" "${pkgdir}/usr/bin/zerovault-ui"
+
+  install -Dm644 "packaging/arch/zerovaultd.service" \
+    "${pkgdir}/usr/lib/systemd/user/zerovaultd.service"
+  install -Dm644 "packaging/arch/zerovault.desktop" \
+    "${pkgdir}/usr/share/applications/zerovault.desktop"
+
+  install -Dm644 "crates/zerovault-ui/icons/32x32.png" \
+    "${pkgdir}/usr/share/icons/hicolor/32x32/apps/zerovault.png"
+  install -Dm644 "crates/zerovault-ui/icons/128x128.png" \
+    "${pkgdir}/usr/share/icons/hicolor/128x128/apps/zerovault.png"
+}
