@@ -20,6 +20,11 @@ tracing-subscriber = { workspace = true }
 zerovault-crypto = { workspace = true }
 zerovault-daemon = { workspace = true }
 zerovault-types = { workspace = true }
+zeroize = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+widestring = { workspace = true }
+windows = { workspace = true }
 
 [dev-dependencies]
 chrono = { workspace = true }

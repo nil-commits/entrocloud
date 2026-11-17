@@ -1,9 +1,13 @@
-//! Zerovault Tauri v2 desktop UI view-models, embedded/IPC daemon bridge, and Tauri commands.
+//! Zerovault Tauri v2 desktop UI view-models, native OS dialogs, and daemon bridge.
 
+pub mod dialogs;
+
+use std::collections::HashSet;
 use std::fmt;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use parking_lot::RwLock as SyncRwLock;
 use serde::{Deserialize, Serialize};
@@ -13,6 +17,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use tokio::sync::Mutex as AsyncMutex;
+use zeroize::Zeroizing;
 use zerovault_crypto::AwsLcCryptoEngine;
 use zerovault_daemon::{DaemonRuntime, DaemonStateConfig, IpcClient, IpcEndpoint, IpcServer};
 use zerovault_types::{
@@ -20,6 +25,8 @@ use zerovault_types::{
     DaemonResponse, EntryKind, HardwareCryptoCaps, HydrationState, OAuthLoginParams, RoutingPolicy,
     VaultEntrySummary, VaultStatusReport,
 };
+
+static SESSION_SEQ: AtomicU64 = AtomicU64::new(1);
 
 /// Shared Tauri application state bridging either an external `zerovaultd` IPC endpoint
 /// or an auto-started embedded [`DaemonRuntime`] so the GUI works standalone with zero CLI setup.
@@ -179,8 +186,47 @@ impl UiAppState {
         Ok(runtime)
     }
 
-    /// Gracefully unmounts any mounted drive and zeroizes keys if running an embedded engine.
+    /// Returns the active UI session directory used for temporary decrypted opens/notes.
+    #[must_use]
+    pub fn session_work_dir(&self) -> PathBuf {
+        self.embedded_state_dir
+            .clone()
+            .unwrap_or_else(DaemonStateConfig::default_state_dir)
+            .join("ui_session")
+    }
+
+    /// Securely zero-overwrites and deletes all temporary opened files inside `ui_session`.
+    pub fn scrub_session_files(&self) {
+        let root = self.session_work_dir();
+        if !root.exists() {
+            return;
+        }
+        let mut dirs = vec![root.clone()];
+        let zero_buf = Zeroizing::new(vec![0u8; 64 * 1024]);
+        while let Some(dir) = dirs.pop() {
+            let Ok(read_dir) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for item in read_dir.flatten() {
+                let path = item.path();
+                let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                    continue;
+                };
+                if meta.file_type().is_symlink() {
+                    let _ = std::fs::remove_file(&path);
+                } else if meta.is_dir() {
+                    dirs.push(path);
+                } else if meta.is_file() {
+                    wipe_and_remove_file(&path, meta.len(), &zero_buf);
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Gracefully unmounts any mounted drive, scrubs UI session files, and stops embedded engine.
     pub async fn graceful_stop(&self) {
+        self.scrub_session_files();
         let rt = {
             let guard = self.embedded_runtime.lock().await;
             guard.clone()
@@ -190,6 +236,13 @@ impl UiAppState {
         {
             tracing::warn!(error = %err, "error shutting down embedded Zerovault engine");
         }
+    }
+
+    /// Locks the vault, zeroizes RAM keys, and securely scrubs any previewed session files.
+    pub async fn lock_and_scrub(&self) -> Result<String, String> {
+        let res = self.send_ok(DaemonRequest::LockVault).await;
+        self.scrub_session_files();
+        res
     }
 
     /// Sends a request expecting [`DaemonResponse::Ok`].
@@ -370,6 +423,412 @@ impl UiAppState {
             other => Err(format!("unexpected create directory response: {other:?}")),
         }
     }
+
+    /// Connects a local or synced cloud folder (`fs` backend) with an auto-deduplicated ID.
+    pub async fn connect_folder_storage(
+        &self,
+        name: String,
+        folder_path: String,
+    ) -> Result<String, String> {
+        let trimmed_path = folder_path.trim();
+        if trimmed_path.is_empty() {
+            return Err("Choose a folder path for encrypted backup storage".to_owned());
+        }
+        let target = PathBuf::from(trimmed_path);
+        std::fs::create_dir_all(&target)
+            .map_err(|err| format!("Could not prepare storage folder: {err}"))?;
+        let clean_root = clean_display_path(&target);
+
+        let status = self.fetch_status_vm().await;
+        let existing_ids: HashSet<String> =
+            status.remotes.into_iter().map(|r| r.id).collect();
+        let id = unique_remote_slug(&name, &existing_ids);
+
+        self.send_ok(DaemonRequest::AddRemote(Box::new(AddRemoteParams {
+            id,
+            kind: "fs".to_owned(),
+            root: clean_root,
+            endpoint: None,
+            bucket: None,
+            region: None,
+            quota_limit_bytes: None,
+            policy: Some("pooled".to_owned()),
+            prefix: None,
+            username: None,
+            secret: None,
+        })))
+        .await
+    }
+
+    /// Decrypts a vault file into a private temporary session folder and opens it in its OS default app.
+    pub async fn open_vault_file(&self, virtual_path: String) -> Result<String, String> {
+        let norm = normalize_ui_vpath(&virtual_path);
+        let (_, file_name) = split_ui_parent_and_name(&norm)?;
+        let work_dir = create_unique_session_subdir(&self.session_work_dir())?;
+        let dest_path = work_dir.join(&file_name);
+
+        self.send_ok(DaemonRequest::ExportVaultFile {
+            virtual_path: norm,
+            local_dest_path: dest_path.to_string_lossy().into_owned(),
+        })
+        .await?;
+
+        dialogs::open_file_in_os_default_app(&dest_path)?;
+        Ok(format!("Opened {file_name}"))
+    }
+
+    /// Decrypts a small text/note file (<= 2 MiB) into memory, returning UTF-8 content and wiping temps.
+    pub async fn read_vault_text_file(
+        &self,
+        virtual_path: String,
+    ) -> Result<VaultTextContent, String> {
+        const MAX_TEXT_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
+        let norm = normalize_ui_vpath(&virtual_path);
+        let (parent_dir, file_name) = split_ui_parent_and_name(&norm)?;
+
+        let listing = self.list_vault_dir(parent_dir).await?;
+        let entry = listing
+            .entries
+            .into_iter()
+            .find(|e| e.name == file_name)
+            .ok_or_else(|| "File not found in vault".to_owned())?;
+        if entry.is_dir {
+            return Err("Folders cannot be opened as a note".to_owned());
+        }
+        if entry.size > MAX_TEXT_PREVIEW_BYTES {
+            return Err(
+                "This file is larger than 2 MB. Use Open to view it with your default desktop app."
+                    .to_owned(),
+            );
+        }
+
+        let work_dir = create_unique_session_subdir(&self.session_work_dir())?;
+        let temp_file = work_dir.join(&file_name);
+        let export_res = self
+            .send_ok(DaemonRequest::ExportVaultFile {
+                virtual_path: norm.clone(),
+                local_dest_path: temp_file.to_string_lossy().into_owned(),
+            })
+            .await;
+
+        let read_res = match export_res {
+            Ok(_) => match std::fs::read(&temp_file) {
+                Ok(raw) => {
+                    let guarded = Zeroizing::new(raw);
+                    String::from_utf8(guarded.to_vec()).map_err(|_| {
+                        "This file contains binary data rather than plain text. Choose Open in Default App instead.".to_owned()
+                    })
+                }
+                Err(err) => Err(format!("Failed reading decrypted file: {err}")),
+            },
+            Err(err) => Err(err),
+        };
+
+        let zero_buf = Zeroizing::new(vec![0u8; 64 * 1024]);
+        if let Ok(meta) = std::fs::symlink_metadata(&temp_file) {
+            wipe_and_remove_file(&temp_file, meta.len(), &zero_buf);
+        }
+        let _ = std::fs::remove_dir_all(&work_dir);
+
+        read_res.map(|content| VaultTextContent {
+            virtual_path: norm,
+            name: file_name,
+            content,
+        })
+    }
+
+    /// Encrypts & saves UTF-8 note text to `virtual_path`, then wipes the temporary staging file.
+    pub async fn save_vault_text_file(
+        &self,
+        virtual_path: String,
+        content: String,
+    ) -> Result<String, String> {
+        let norm = normalize_ui_vpath(&virtual_path);
+        let (_, file_name) = split_ui_parent_and_name(&norm)?;
+        let work_dir = create_unique_session_subdir(&self.session_work_dir())?;
+        let temp_file = work_dir.join(&file_name);
+
+        let write_res = std::fs::write(&temp_file, content.as_bytes())
+            .map_err(|err| format!("Failed staging note text: {err}"));
+        let import_res = match write_res {
+            Ok(()) => {
+                self.send_ok(DaemonRequest::ImportLocalFile {
+                    local_path: temp_file.to_string_lossy().into_owned(),
+                    virtual_dest_path: norm,
+                })
+                .await
+            }
+            Err(err) => Err(err),
+        };
+
+        let zero_buf = Zeroizing::new(vec![0u8; 64 * 1024]);
+        if let Ok(meta) = std::fs::symlink_metadata(&temp_file) {
+            wipe_and_remove_file(&temp_file, meta.len(), &zero_buf);
+        }
+        let _ = std::fs::remove_dir_all(&work_dir);
+
+        import_res.map(|_| format!("Saved {file_name}"))
+    }
+
+    /// Unpins (if needed) and dehydrates a vault file in one click to free local PC disk space.
+    pub async fn free_up_space(&self, virtual_path: String) -> Result<String, String> {
+        let norm = normalize_ui_vpath(&virtual_path);
+        match self
+            .dispatch(DaemonRequest::Unpin {
+                virtual_path: norm.clone(),
+            })
+            .await?
+        {
+            DaemonResponse::Error { code, message } if code == "vault_locked" => {
+                return Err(format!("[{code}] {message}"));
+            }
+            _ => {}
+        }
+        self.send_ok(DaemonRequest::Dehydrate { virtual_path: norm })
+            .await
+    }
+}
+
+/// Auto-detected local or synced cloud folder location presented for 1-click onboarding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DetectedCloudOption {
+    /// Short provider identifier (`"onedrive"`, `"gdrive"`, `"dropbox"`, `"icloud"`, `"local"`).
+    pub provider_key: String,
+    /// Human-readable location name (`"Microsoft OneDrive"`, `"Google Drive"`, etc.).
+    pub display_name: String,
+    /// Detected base cloud root folder on this PC.
+    pub detected_root: String,
+    /// Suggested encrypted vault subfolder path inside `detected_root`.
+    pub suggested_vault_path: String,
+    /// Friendly subtitle explaining what happens when selected.
+    pub description: String,
+}
+
+/// Plaintext UTF-8 file payload returned for the built-in encrypted note editor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaultTextContent {
+    /// Normalized virtual path in the vault.
+    pub virtual_path: String,
+    /// Basename of the text file.
+    pub name: String,
+    /// UTF-8 file text.
+    pub content: String,
+}
+
+fn ensure_private_dir(dir: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir)
+        .map_err(|err| format!("Failed creating session directory: {err}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|err| format!("Failed hardening session directory permissions: {err}"))?;
+    }
+    Ok(())
+}
+
+fn create_unique_session_subdir(session_root: &Path) -> Result<PathBuf, String> {
+    ensure_private_dir(session_root)?;
+    let seq = SESSION_SEQ.fetch_add(1, Ordering::Relaxed);
+    let sub = session_root.join(format!("op_{}_{}", std::process::id(), seq));
+    ensure_private_dir(&sub)?;
+    Ok(sub)
+}
+
+fn wipe_and_remove_file(path: &Path, len: u64, zero_buf: &[u8]) {
+    if len > 0
+        && let Ok(mut file) = std::fs::OpenOptions::new().write(true).open(path)
+    {
+        let mut remaining = len;
+        while remaining > 0 {
+            let chunk = (remaining as usize).min(zero_buf.len());
+            if file.write_all(&zero_buf[..chunk]).is_err() {
+                break;
+            }
+            remaining -= chunk as u64;
+        }
+        let _ = file.sync_data();
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+fn unique_remote_slug(raw_name: &str, existing: &HashSet<String>) -> String {
+    let mut slug = String::new();
+    let mut prev_dash = false;
+    for ch in raw_name.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash && !slug.is_empty() {
+            slug.push('-');
+            prev_dash = true;
+        }
+    }
+    let base = slug.trim_matches('-');
+    let base = if base.is_empty() { "storage" } else { base };
+    if !existing.contains(base) {
+        return base.to_owned();
+    }
+    for idx in 2..=999 {
+        let candidate = format!("{base}-{idx}");
+        if !existing.contains(&candidate) {
+            return candidate;
+        }
+    }
+    format!("{base}-{}", SESSION_SEQ.fetch_add(1, Ordering::Relaxed))
+}
+
+fn split_ui_parent_and_name(norm_vpath: &str) -> Result<(String, String), String> {
+    if norm_vpath == "/" {
+        return Err("Operation cannot target the root folder directly".to_owned());
+    }
+    let Some(idx) = norm_vpath.rfind('/') else {
+        return Err("Invalid virtual path".to_owned());
+    };
+    let parent = if idx == 0 {
+        "/".to_owned()
+    } else {
+        norm_vpath[..idx].to_owned()
+    };
+    let name = norm_vpath[idx + 1..].to_owned();
+    if name.is_empty() || name == "." || name == ".." || name.contains('\0') {
+        return Err("Invalid file or folder name".to_owned());
+    }
+    Ok((parent, name))
+}
+
+/// Scans standard OS paths and cloud desktop configs to surface 1-click encrypted storage locations.
+#[must_use]
+pub fn detect_installed_clouds_sync() -> Vec<DetectedCloudOption> {
+    let mut results = Vec::new();
+    let mut seen_roots: HashSet<String> = HashSet::new();
+
+    let mut push_if_exists =
+        |provider_key: &str, display_name: &str, candidate: PathBuf, desc: &str| {
+            if !candidate.exists() || !candidate.is_dir() {
+                return;
+            }
+            let clean_root = clean_display_path(&candidate);
+            let dedup_key = if cfg!(target_os = "windows") {
+                clean_root.to_ascii_lowercase()
+            } else {
+                clean_root.clone()
+            };
+            if !seen_roots.insert(dedup_key) {
+                return;
+            }
+            let suggested_vault_path =
+                clean_display_path(&candidate.join("Zerovault"));
+            results.push(DetectedCloudOption {
+                provider_key: provider_key.to_owned(),
+                display_name: display_name.to_owned(),
+                detected_root: clean_root,
+                suggested_vault_path,
+                description: desc.to_owned(),
+            });
+        };
+
+    // Microsoft OneDrive
+    for var in ["OneDriveConsumer", "OneDrive", "OneDriveCommercial"] {
+        if let Some(val) = std::env::var_os(var) {
+            push_if_exists(
+                "onedrive",
+                "Microsoft OneDrive",
+                PathBuf::from(val),
+                "Saves unreadable encrypted backups into your synced OneDrive folder.",
+            );
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        push_if_exists(
+            "onedrive",
+            "Microsoft OneDrive",
+            home.join("OneDrive"),
+            "Saves unreadable encrypted backups into your synced OneDrive folder.",
+        );
+    }
+
+    // Google Drive Desktop
+    if let Some(home) = dirs::home_dir() {
+        for sub in ["Google Drive", "My Drive"] {
+            push_if_exists(
+                "gdrive",
+                "Google Drive",
+                home.join(sub),
+                "Stores encrypted Zerovault files directly inside your Google Drive folder.",
+            );
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        for drive in ["G:\\My Drive", "H:\\My Drive", "I:\\My Drive", "D:\\My Drive"] {
+            push_if_exists(
+                "gdrive",
+                "Google Drive",
+                PathBuf::from(drive),
+                "Stores encrypted Zerovault files directly inside Google Drive for Desktop.",
+            );
+        }
+    }
+
+    // Dropbox (`info.json` + ~/Dropbox)
+    for base in [dirs::data_local_dir(), dirs::config_dir()]
+        .into_iter()
+        .flatten()
+    {
+        let info_path = base.join("Dropbox").join("info.json");
+        if let Ok(raw) = std::fs::read_to_string(&info_path)
+            && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw)
+        {
+            for tier in ["personal", "business"] {
+                if let Some(p) = parsed
+                    .get(tier)
+                    .and_then(|obj| obj.get("path"))
+                    .and_then(|v| v.as_str())
+                {
+                    push_if_exists(
+                        "dropbox",
+                        "Dropbox",
+                        PathBuf::from(p),
+                        "Saves encrypted backups inside your synced Dropbox folder.",
+                    );
+                }
+            }
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        push_if_exists(
+            "dropbox",
+            "Dropbox",
+            home.join("Dropbox"),
+            "Saves encrypted backups inside your synced Dropbox folder.",
+        );
+    }
+
+    // Apple iCloud Drive (if present)
+    if let Some(home) = dirs::home_dir() {
+        push_if_exists(
+            "icloud",
+            "iCloud Drive",
+            home.join("iCloudDrive"),
+            "Saves encrypted backups into your synced iCloud Drive folder.",
+        );
+    }
+
+    // Always include a guaranteed 1-click Local Documents / Home encrypted storage folder
+    let base_local = dirs::document_dir()
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let local_vault = clean_display_path(&base_local.join("Zerovault Encrypted Storage"));
+    results.push(DetectedCloudOption {
+        provider_key: "local".to_owned(),
+        display_name: "Local Folder (Documents)".to_owned(),
+        detected_root: clean_display_path(&base_local),
+        suggested_vault_path: local_vault,
+        description: "Stores encrypted backup files in a folder on this computer (ready immediately, no internet required).".to_owned(),
+    });
+
+    results
 }
 
 fn normalize_ui_vpath(raw: &str) -> String {
@@ -1196,10 +1655,10 @@ pub mod commands {
             .await
     }
 
-    /// Tauri IPC command immediately locking the vault and zeroizing RAM keys (`DaemonRequest::LockVault`).
+    /// Tauri IPC command immediately locking the vault, zeroizing RAM keys, and wiping preview files.
     #[tauri::command(rename_all = "snake_case")]
     pub async fn lock_vault(state: State<'_, UiAppState>) -> Result<String, String> {
-        state.send_ok(DaemonRequest::LockVault).await
+        state.lock_and_scrub().await
     }
 
     /// Tauri IPC command triggering an immediate daemon sync (`DaemonRequest::SyncNow`).
@@ -1446,6 +1905,95 @@ pub mod commands {
         create_local_dir_sync(&parent_path, &name)
     }
 
+    /// Tauri IPC command opening the native OS multi-file picker dialog.
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn pick_local_files_dialog() -> Result<Option<Vec<String>>, String> {
+        tokio::task::spawn_blocking(|| dialogs::pick_files_native("Choose files to add to Zerovault"))
+            .await
+            .map_err(|err| format!("file picker dialog failed: {err}"))?
+    }
+
+    /// Tauri IPC command opening the native OS folder picker dialog.
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn pick_local_folder_dialog(
+        title: Option<String>,
+    ) -> Result<Option<Option<String>>, String> {
+        let dialog_title = title
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "Choose folder".to_owned());
+        tokio::task::spawn_blocking(move || dialogs::pick_folder_native(&dialog_title))
+            .await
+            .map_err(|err| format!("folder picker dialog failed: {err}"))?
+    }
+
+    /// Tauri IPC command opening the native OS "Save As" dialog.
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn pick_save_file_dialog(
+        suggested_name: String,
+    ) -> Result<Option<Option<String>>, String> {
+        tokio::task::spawn_blocking(move || {
+            dialogs::pick_save_file_native("Save decrypted copy to computer", &suggested_name)
+        })
+        .await
+        .map_err(|err| format!("save file dialog failed: {err}"))?
+    }
+
+    /// Tauri IPC command returning auto-detected cloud/local folders for 1-click storage setup.
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn detect_installed_clouds() -> Result<Vec<DetectedCloudOption>, String> {
+        tokio::task::spawn_blocking(detect_installed_clouds_sync)
+            .await
+            .map_err(|err| format!("cloud folder detection failed: {err}"))
+    }
+
+    /// Tauri IPC command connecting a synced cloud or local folder in 1 click.
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn connect_folder_storage(
+        state: State<'_, UiAppState>,
+        name: String,
+        folder_path: String,
+    ) -> Result<String, String> {
+        state.connect_folder_storage(name, folder_path).await
+    }
+
+    /// Tauri IPC command decrypting a vault file into a private session folder and opening it.
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn open_vault_file(
+        state: State<'_, UiAppState>,
+        virtual_path: String,
+    ) -> Result<String, String> {
+        state.open_vault_file(virtual_path).await
+    }
+
+    /// Tauri IPC command reading a UTF-8 vault note/text file for the built-in viewer/editor.
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn read_vault_text_file(
+        state: State<'_, UiAppState>,
+        virtual_path: String,
+    ) -> Result<VaultTextContent, String> {
+        state.read_vault_text_file(virtual_path).await
+    }
+
+    /// Tauri IPC command saving UTF-8 note text into the vault and scrubbing temporary files.
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn save_vault_text_file(
+        state: State<'_, UiAppState>,
+        virtual_path: String,
+        content: String,
+    ) -> Result<String, String> {
+        state.save_vault_text_file(virtual_path, content).await
+    }
+
+    /// Tauri IPC command unpinning (if needed) and dehydrating a vault file in one click.
+    #[tauri::command(rename_all = "snake_case")]
+    pub async fn free_up_space(
+        state: State<'_, UiAppState>,
+        virtual_path: String,
+    ) -> Result<String, String> {
+        state.free_up_space(virtual_path).await
+    }
+
     /// Tauri IPC command gracefully unmounting, zeroizing keys, and exiting the desktop app.
     #[tauri::command(rename_all = "snake_case")]
     pub async fn quit_app(app: AppHandle, state: State<'_, UiAppState>) -> Result<(), String> {
@@ -1456,12 +2004,14 @@ pub mod commands {
 }
 
 pub use commands::{
-    add_remote, browse_local_fs, create_local_dir, create_vault_dir, dehydrate_vault_entry,
-    delete_vault_entry, export_vault_file, fetch_status, get_hardware_caps, import_local_files,
-    init_vault, list_conflicts, list_vault_dir, lock_vault, mount_drive, oauth_login_remote,
-    open_in_file_manager, pin_vault_entry, quit_app, remove_remote, rename_vault_entry,
-    run_crypto_benchmark, set_routing_policy, sync_now, unlock_vault, unmount_drive,
-    unpin_vault_entry,
+    add_remote, browse_local_fs, connect_folder_storage, create_local_dir, create_vault_dir,
+    dehydrate_vault_entry, delete_vault_entry, detect_installed_clouds, export_vault_file,
+    fetch_status, free_up_space, get_hardware_caps, import_local_files, init_vault, list_conflicts,
+    list_vault_dir, lock_vault, mount_drive, oauth_login_remote, open_in_file_manager,
+    open_vault_file, pick_local_files_dialog, pick_local_folder_dialog, pick_save_file_dialog,
+    pin_vault_entry, quit_app, read_vault_text_file, remove_remote, rename_vault_entry,
+    run_crypto_benchmark, save_vault_text_file, set_routing_policy, sync_now, unlock_vault,
+    unmount_drive, unpin_vault_entry,
 };
 
 fn toggle_main_window(app: &AppHandle) {
@@ -1519,7 +2069,7 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             "lock_vault" => {
                 let ui_state = app.state::<UiAppState>().inner().clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(err) = ui_state.send_ok(DaemonRequest::LockVault).await {
+                    if let Err(err) = ui_state.lock_and_scrub().await {
                         tracing::warn!(error = %err, "tray menu lock_vault failed");
                     }
                 });
@@ -1618,6 +2168,15 @@ pub fn run() -> tauri::Result<()> {
             commands::run_crypto_benchmark,
             commands::browse_local_fs,
             commands::create_local_dir,
+            commands::pick_local_files_dialog,
+            commands::pick_local_folder_dialog,
+            commands::pick_save_file_dialog,
+            commands::detect_installed_clouds,
+            commands::connect_folder_storage,
+            commands::open_vault_file,
+            commands::read_vault_text_file,
+            commands::save_vault_text_file,
+            commands::free_up_space,
             commands::quit_app,
         ])
         .setup(|app| setup_tray(app))
@@ -1933,5 +2492,90 @@ mod tests {
         let locked_vm = ui_state.fetch_status_vm().await;
         assert!(!locked_vm.unlocked);
         assert!(!locked_vm.mounted);
+    }
+
+    #[tokio::test]
+    async fn human_workflows_notes_free_space_clouds_and_session_scrub_work() {
+        let tmp = TempDir::new().expect("tempdir");
+        let state_dir = tmp.path().join("human_state");
+        let backup_a = tmp.path().join("OneDriveBackup");
+        let backup_b = tmp.path().join("OneDriveBackup2");
+
+        let ui_state = UiAppState::with_embedded_state_dir(state_dir.clone());
+
+        ui_state
+            .send_ok(DaemonRequest::InitVault {
+                passphrase: "human-friendly-passphrase".to_owned(),
+            })
+            .await
+            .expect("init vault");
+
+        // 1-click folder storage connection + automatic slug deduplication
+        ui_state
+            .connect_folder_storage(
+                "Microsoft OneDrive".to_owned(),
+                backup_a.to_string_lossy().into_owned(),
+            )
+            .await
+            .expect("first connect");
+        ui_state
+            .connect_folder_storage(
+                "Microsoft OneDrive".to_owned(),
+                backup_b.to_string_lossy().into_owned(),
+            )
+            .await
+            .expect("second connect");
+
+        let vm = ui_state.fetch_status_vm().await;
+        assert_eq!(vm.remotes.len(), 2);
+        assert_eq!(vm.remotes[0].id, "microsoft-onedrive");
+        assert_eq!(vm.remotes[1].id, "microsoft-onedrive-2");
+
+        // Detect installed clouds always offers at least the Local Folder option
+        let clouds = detect_installed_clouds_sync();
+        assert!(clouds.iter().any(|c| c.provider_key == "local"));
+
+        // Save + read encrypted note roundtrip (with temporary cleanup verified)
+        ui_state
+            .save_vault_text_file(
+                "/Welcome Note.txt".to_owned(),
+                "Remember the milk and private keys!".to_owned(),
+            )
+            .await
+            .expect("save note");
+        let note = ui_state
+            .read_vault_text_file("/Welcome Note.txt".to_owned())
+            .await
+            .expect("read note");
+        assert_eq!(note.name, "Welcome Note.txt");
+        assert_eq!(note.content, "Remember the milk and private keys!");
+
+        // Pin offline, then free_up_space unpins & dehydrates in 1 click without error
+        ui_state
+            .send_ok(DaemonRequest::Pin {
+                virtual_path: "/Welcome Note.txt".to_owned(),
+            })
+            .await
+            .expect("pin");
+        ui_state
+            .free_up_space("/Welcome Note.txt".to_owned())
+            .await
+            .expect("free_up_space");
+        let root_listing = ui_state
+            .list_vault_dir("/".to_owned())
+            .await
+            .expect("list root");
+        assert_eq!(root_listing.entries[0].hydration, "online-only");
+        assert!(!root_listing.entries[0].pinned);
+
+        // Lock & scrub wipes any lingering preview files in ui_session
+        let leaked_dir = create_unique_session_subdir(&ui_state.session_work_dir())
+            .expect("create session subdir");
+        std::fs::write(leaked_dir.join("preview.txt"), b"sensitive decrypted content")
+            .expect("write preview");
+        assert!(ui_state.session_work_dir().exists());
+
+        ui_state.lock_and_scrub().await.expect("lock and scrub");
+        assert!(!ui_state.session_work_dir().exists());
     }
 }

@@ -10,3 +10,5 @@
 Thumbs.db
 node_modules/
 *.log
+/Zerovault.exe
+/dist/
