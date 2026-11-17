@@ -70,6 +70,47 @@ impl BoundedBufferPool {
             .await
             .map_err(|_| ZeroVaultError::ConfigError("buffer pool semaphore closed".into()))?;
 
+        let buf = self.take_or_alloc_buf();
+        Ok(PooledBuffer {
+            buf,
+            max_slots: self.max_slots,
+            free_list: Arc::clone(&self.free_list),
+            _permit: Some(permit),
+        })
+    }
+
+    /// Atomically acquires a pair of buffer permits (`pt` + `wire`) to prevent dual-buffer deadlock.
+    pub async fn acquire_pair(&self) -> ZeroVaultResult<PooledBufferPair> {
+        if self.max_slots < 2 {
+            return Err(ZeroVaultError::ConfigError(
+                "BoundedBufferPool requires at least 2 slots for acquire_pair".into(),
+            ));
+        }
+        let permit = Arc::clone(&self.semaphore)
+            .acquire_many_owned(2)
+            .await
+            .map_err(|_| ZeroVaultError::ConfigError("buffer pool semaphore closed".into()))?;
+
+        let pt = self.take_or_alloc_buf();
+        let wire = self.take_or_alloc_buf();
+        Ok(PooledBufferPair {
+            pt: PooledBuffer {
+                buf: pt,
+                max_slots: self.max_slots,
+                free_list: Arc::clone(&self.free_list),
+                _permit: None,
+            },
+            wire: PooledBuffer {
+                buf: wire,
+                max_slots: self.max_slots,
+                free_list: Arc::clone(&self.free_list),
+                _permit: None,
+            },
+            _permit: Some(permit),
+        })
+    }
+
+    fn take_or_alloc_buf(&self) -> BytesMut {
         let mut buf = {
             let mut guard = self.free_list.lock();
             guard.pop()
@@ -80,13 +121,7 @@ impl BoundedBufferPool {
         if buf.capacity() < self.buffer_capacity {
             buf.reserve(self.buffer_capacity - buf.capacity());
         }
-
-        Ok(PooledBuffer {
-            buf: Some(buf),
-            max_slots: self.max_slots,
-            free_list: Arc::clone(&self.free_list),
-            _permit: Some(permit),
-        })
+        buf
     }
 
     /// Maximum number of concurrent in-flight buffer slots allowed.
@@ -126,21 +161,27 @@ impl BoundedBufferPool {
 /// On drop, scrubs active bytes, `.clear()`s the buffer, returns it to the free list,
 /// and releases the semaphore permit so waiting tasks can immediately reuse it.
 pub struct PooledBuffer {
-    buf: Option<BytesMut>,
+    buf: BytesMut,
     max_slots: usize,
     free_list: Arc<Mutex<Vec<BytesMut>>>,
     _permit: Option<OwnedSemaphorePermit>,
 }
 
+/// RAII handle holding two atomically-acquired [`PooledBuffer`]s (`pt` and `wire`).
+#[derive(Debug)]
+pub struct PooledBufferPair {
+    /// Plaintext chunk buffer.
+    pub pt: PooledBuffer,
+    /// Wire ciphertext chunk buffer.
+    pub wire: PooledBuffer,
+    _permit: Option<OwnedSemaphorePermit>,
+}
+
 impl fmt::Debug for PooledBuffer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (len, cap) = self
-            .buf
-            .as_ref()
-            .map_or((0, 0), |b| (b.len(), b.capacity()));
         f.debug_struct("PooledBuffer")
-            .field("len", &len)
-            .field("capacity", &cap)
+            .field("len", &self.buf.len())
+            .field("capacity", &self.buf.capacity())
             .finish()
     }
 }
@@ -149,12 +190,12 @@ impl PooledBuffer {
     /// Borrows the underlying buffer as an immutable byte slice.
     #[must_use]
     pub fn as_slice(&self) -> &[u8] {
-        self.buf.as_deref().unwrap_or(&[])
+        &self.buf
     }
 
     /// Borrows the underlying buffer as a mutable byte slice.
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        self.buf.as_deref_mut().unwrap_or(&mut [])
+        &mut self.buf
     }
 }
 
@@ -162,33 +203,36 @@ impl Deref for PooledBuffer {
     type Target = BytesMut;
 
     fn deref(&self) -> &Self::Target {
-        self.buf
-            .as_ref()
-            .expect("PooledBuffer accessed after drop")
+        &self.buf
     }
 }
 
 impl DerefMut for PooledBuffer {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.buf
-            .as_mut()
-            .expect("PooledBuffer accessed after drop")
+        &mut self.buf
     }
 }
 
 impl Drop for PooledBuffer {
     fn drop(&mut self) {
-        if let Some(mut buf) = self.buf.take() {
-            // Scrub active plaintext/wire bytes before recycling into the pool.
-            buf.as_mut().zeroize();
-            buf.clear();
+        let mut buf = std::mem::take(&mut self.buf);
+        // Scrub active plaintext/wire bytes before recycling into the pool.
+        buf.as_mut().zeroize();
+        buf.clear();
+        {
             let mut guard = self.free_list.lock();
-            if guard.len() < self.max_slots {
+            if guard.len() < self.max_slots && buf.capacity() > 0 {
                 guard.push(buf);
             }
         }
         // Release permit only after returning `buf` to the free list so the next
         // waiter immediately reuses the recycled allocation.
+        let _ = self._permit.take();
+    }
+}
+
+impl Drop for PooledBufferPair {
+    fn drop(&mut self) {
         let _ = self._permit.take();
     }
 }

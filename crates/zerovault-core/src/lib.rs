@@ -12,5 +12,5 @@ pub use conflict::{
 };
 pub use db::SqliteMetadataStore;
 pub use engine::{SyncEngine, SyncEngineConfig, SyncReport};
-pub use pool::{BoundedBufferPool, DEFAULT_BUFFER_SLOTS, PooledBuffer};
+pub use pool::{BoundedBufferPool, DEFAULT_BUFFER_SLOTS, PooledBuffer, PooledBufferPair};
 pub use zerovault_types;

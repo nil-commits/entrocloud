@@ -20,6 +20,7 @@ use tokio::runtime::{Builder, Handle, Runtime, RuntimeFlavor};
 use zerovault_types::{
     CreateEntrySpec, EntryKind, HydrationState, InodeId, InodeRecord, PLAINTEXT_CHUNK_SIZE,
     ROOT_INODE, SetAttrSpec, VfsBackend, XATTR_ZEROVAULT_PIN, XATTR_ZEROVAULT_STATE, ZeroVaultError,
+    ZeroVaultResult,
 };
 
 const DEFAULT_TTL: Duration = Duration::from_secs(1);
@@ -434,7 +435,7 @@ impl DirtyWriteBuffer {
 
 enum RuntimeBridge {
     Handle(Handle),
-    Owned(Runtime),
+    Owned(Result<Runtime, String>),
 }
 
 impl RuntimeBridge {
@@ -453,31 +454,34 @@ impl RuntimeBridge {
             .thread_name("zerovault-fuse-rt")
             .enable_all()
             .build()
-            .expect("failed to initialize Tokio runtime bridge for Linux FUSE");
+            .map_err(|err| format!("failed to initialize Tokio runtime bridge for Linux FUSE: {err}"));
         Self::Owned(rt)
     }
 
-    fn raw_block_on<F: Future>(&self, fut: F) -> F::Output {
+    fn raw_block_on<T, F: Future<Output = ZeroVaultResult<T>>>(&self, fut: F) -> ZeroVaultResult<T> {
         match self {
             Self::Handle(handle) => handle.block_on(fut),
-            Self::Owned(rt) => rt.block_on(fut),
+            Self::Owned(Ok(rt)) => rt.block_on(fut),
+            Self::Owned(Err(msg)) => Err(ZeroVaultError::VfsError(msg.clone())),
         }
     }
 
-    fn block_on<F>(&self, fut: F) -> F::Output
+    fn block_on<T, F>(&self, fut: F) -> ZeroVaultResult<T>
     where
-        F: Future + Send,
-        F::Output: Send,
+        F: Future<Output = ZeroVaultResult<T>> + Send,
+        T: Send,
     {
         match Handle::try_current() {
             Ok(cur) if matches!(cur.runtime_flavor(), RuntimeFlavor::MultiThread) => {
                 tokio::task::block_in_place(|| self.raw_block_on(fut))
             }
             Ok(_) => std::thread::scope(|scope| {
-                scope
-                    .spawn(|| self.raw_block_on(fut))
-                    .join()
-                    .expect("Tokio bridge worker thread panicked")
+                match scope.spawn(|| self.raw_block_on(fut)).join() {
+                    Ok(res) => res,
+                    Err(_) => Err(ZeroVaultError::VfsError(
+                        "Tokio bridge worker thread panicked".into(),
+                    )),
+                }
             }),
             Err(_) => self.raw_block_on(fut),
         }
@@ -594,10 +598,10 @@ impl LinuxFuseFilesystem {
         handle.dirty.lock().len()
     }
 
-    fn block_on<F>(&self, fut: F) -> F::Output
+    fn block_on<T, F>(&self, fut: F) -> ZeroVaultResult<T>
     where
-        F: Future + Send,
-        F::Output: Send,
+        F: Future<Output = ZeroVaultResult<T>> + Send,
+        T: Send,
     {
         self.runtime.block_on(fut)
     }

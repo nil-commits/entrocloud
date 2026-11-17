@@ -4,6 +4,7 @@ use std::fmt;
 use std::io::SeekFrom;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
 use lru::LruCache;
@@ -11,13 +12,14 @@ use parking_lot::Mutex;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use uuid::Uuid;
+use zeroize::Zeroizing;
 use zerovault_types::{InodeId, PLAINTEXT_CHUNK_SIZE, ZeroVaultError, ZeroVaultResult};
 
 /// Default in-memory decrypted chunk LRU cache budget: 32 MiB (`8 * 4 MiB`).
 pub const DEFAULT_MAX_RAM_CACHE_BYTES: usize = 32 * 1024 * 1024;
 
 struct RamCacheInner {
-    lru: LruCache<(Uuid, u64), Bytes>,
+    lru: LruCache<(Uuid, u64), Arc<Zeroizing<Vec<u8>>>>,
     used_bytes: usize,
     max_ram_bytes: usize,
 }
@@ -27,6 +29,12 @@ struct RamCacheInner {
 pub struct ChunkCache {
     staging_dir: PathBuf,
     ram: Mutex<RamCacheInner>,
+}
+
+impl Drop for ChunkCache {
+    fn drop(&mut self) {
+        self.clear_ram();
+    }
 }
 
 impl fmt::Debug for ChunkCache {
@@ -47,6 +55,8 @@ impl ChunkCache {
         let staging_dir = staging_dir.into();
         let dirty_root = staging_dir.join("dirty");
         std::fs::create_dir_all(&dirty_root)?;
+        restrict_dir_perms(&staging_dir);
+        restrict_dir_perms(&dirty_root);
 
         // Use `LruCache::unbounded()` so eviction is strictly governed by byte count,
         // unless `NonZeroUsize` is needed only as an internal sanity cap (unused here).
@@ -82,16 +92,27 @@ impl ChunkCache {
 
     /// Looks up a verified plaintext chunk in the in-memory LRU cache, promoting it on hit.
     #[must_use]
-    pub fn get(&self, file_id: Uuid, chunk_index: u64) -> Option<Bytes> {
+    pub fn get(&self, file_id: Uuid, chunk_index: u64) -> Option<Arc<Zeroizing<Vec<u8>>>> {
         let mut guard = self.ram.lock();
         guard.lru.get(&(file_id, chunk_index)).cloned()
     }
 
-    /// Inserts a verified plaintext chunk into the LRU cache, evicting oldest entries until
-    /// `used_bytes + data.len() <= max_ram_bytes`.
+    /// Inserts a verified plaintext chunk into the LRU cache (wrapped in `Zeroizing`),
+    /// evicting oldest entries until `used_bytes + data.len() <= max_ram_bytes`.
     ///
     /// Returns `false` (skipping caching) if `data.len() > max_ram_bytes`.
     pub fn insert(&self, file_id: Uuid, chunk_index: u64, data: Bytes) -> bool {
+        let wrapped = Arc::new(Zeroizing::new(data.to_vec()));
+        self.insert_zeroizing(file_id, chunk_index, wrapped)
+    }
+
+    /// Inserts an already-zeroizing chunk slice into the bounded LRU cache.
+    pub fn insert_zeroizing(
+        &self,
+        file_id: Uuid,
+        chunk_index: u64,
+        data: Arc<Zeroizing<Vec<u8>>>,
+    ) -> bool {
         let mut guard = self.ram.lock();
         let entry_len = data.len();
         if entry_len > guard.max_ram_bytes {
@@ -225,15 +246,14 @@ impl ChunkCache {
 
         let dir = self.dirty_inode_dir(inode);
         fs::create_dir_all(&dir).await?;
+        restrict_dir_perms(&dir);
         let part_path = self.dirty_chunk_path(inode, chunk_index);
 
-        let mut file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&part_path)
-            .await?;
+        let mut opts = OpenOptions::new();
+        opts.create(true).read(true).write(true).truncate(false);
+        #[cfg(unix)]
+        opts.mode(0o600);
+        let mut file = opts.open(&part_path).await?;
         file.seek(SeekFrom::Start(in_chunk_offset as u64)).await?;
         file.write_all(data).await?;
         file.flush().await?;
@@ -256,14 +276,14 @@ impl ChunkCache {
         }
         let dir = self.dirty_inode_dir(inode);
         fs::create_dir_all(&dir).await?;
+        restrict_dir_perms(&dir);
         let part_path = self.dirty_chunk_path(inode, chunk_index);
 
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&part_path)
-            .await?;
+        let mut opts = OpenOptions::new();
+        opts.create(true).write(true).truncate(true);
+        #[cfg(unix)]
+        opts.mode(0o600);
+        let mut file = opts.open(&part_path).await?;
         file.write_all(data).await?;
         file.flush().await?;
         Ok(())
@@ -335,6 +355,18 @@ impl ChunkCache {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(err) => Err(err.into()),
         }
+    }
+}
+
+fn restrict_dir_perms(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
     }
 }
 

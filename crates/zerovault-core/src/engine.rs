@@ -1,6 +1,6 @@
 //! Streaming 4 MiB chunk sync engine implementing [`zerovault_types::VfsBackend`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,6 +15,7 @@ use futures::stream::{self, StreamExt, TryStreamExt};
 use parking_lot::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 use zerovault_types::{
     BlobObjectKey, ChunkAad, ChunkDescriptor, ChunkRef, CreateEntrySpec, CryptoEngine, DekBytes,
     DirtyOpKind, DriveStats, EntryKind, HydrationState, InodeId, InodeRecord,
@@ -175,6 +176,7 @@ pub struct SyncEngine {
     inode_locks: DashMap<InodeId, Arc<AsyncMutex<()>>>,
     sync_lock: AsyncMutex<()>,
     last_manifest_id: Mutex<Option<Uuid>>,
+    committed_nodes: Mutex<HashMap<InodeId, ManifestNode>>,
 }
 
 impl fmt::Debug for SyncEngine {
@@ -208,7 +210,7 @@ impl SyncEngine {
         crypto: Arc<dyn CryptoEngine>,
         storage: Arc<dyn StorageRouterTrait>,
     ) -> ZeroVaultResult<Self> {
-        let pool = BoundedBufferPool::new(config.max_concurrent_transfers);
+        let pool = BoundedBufferPool::new(config.max_concurrent_transfers.max(2));
         let cache = ChunkCache::new(&config.staging_dir, config.max_ram_cache_bytes)?;
         Ok(Self {
             config,
@@ -221,7 +223,16 @@ impl SyncEngine {
             inode_locks: DashMap::new(),
             sync_lock: AsyncMutex::new(()),
             last_manifest_id: Mutex::new(None),
+            committed_nodes: Mutex::new(HashMap::new()),
         })
+    }
+
+    fn ensure_unlocked(&self) -> ZeroVaultResult<()> {
+        if !self.crypto.is_unlocked() {
+            self.cache.clear_ram();
+            return Err(ZeroVaultError::VaultLocked);
+        }
+        Ok(())
     }
 
     /// Returns a reference to the engine configuration.
@@ -302,9 +313,7 @@ impl SyncEngine {
     ///    retries via `mark_dirty_retry` on transient failures.
     /// 3. Seals and atomically publishes a new manifest snapshot when local mutations succeeded.
     pub async fn sync_once(&self) -> ZeroVaultResult<SyncReport> {
-        if !self.crypto.is_unlocked() {
-            return Err(ZeroVaultError::VaultLocked);
-        }
+        self.ensure_unlocked()?;
 
         let _sync_guard = self.sync_lock.lock().await;
         let mut report = SyncReport::default();
@@ -329,6 +338,12 @@ impl SyncEngine {
                                     "remote manifest vault_id mismatch".into(),
                                 ));
                             }
+                            if local_rev > 0 && manifest.revision < local_rev {
+                                return Err(ZeroVaultError::CryptoTamperDetected(format!(
+                                    "remote manifest revision rollback detected: local={local_rev}, remote={}",
+                                    manifest.revision
+                                )));
+                            }
 
                             let remote_changed = manifest.revision > local_rev
                                 || (local_rev == 0 && !manifest.nodes.is_empty())
@@ -351,6 +366,7 @@ impl SyncEngine {
                                 report.applied_remote_nodes = summary.applied_remote_nodes;
                                 report.pruned_local_nodes = summary.pruned_local_nodes;
                                 report.conflicts_resolved = summary.conflicts_recorded;
+                                self.refresh_committed_nodes_snapshot().await?;
                             }
 
                             self.meta
@@ -419,7 +435,11 @@ impl SyncEngine {
 
         // Phase 3: Publish updated manifest snapshot if any dirty operations are ready to commit.
         if !staged_finalize.is_empty() {
-            match self.publish_manifest_locked().await {
+            let uploaded_inodes: Vec<InodeId> = staged_finalize
+                .iter()
+                .filter_map(|(maybe_ino, _)| *maybe_ino)
+                .collect();
+            match self.publish_manifest_locked(&uploaded_inodes).await {
                 Ok(new_rev) => {
                     report.published_revision = Some(new_rev);
                     for (maybe_inode, op_id) in staged_finalize {
@@ -465,7 +485,7 @@ impl SyncEngine {
         rec: &InodeRecord,
         dek: &DekBytes,
         desc: &ChunkDescriptor,
-    ) -> ZeroVaultResult<Bytes> {
+    ) -> ZeroVaultResult<Arc<Zeroizing<Vec<u8>>>> {
         if let Some(cached) = self.cache.get(rec.file_id, desc.chunk_index) {
             self.stats.cache_hits.fetch_add(1, Ordering::Relaxed);
             return Ok(cached);
@@ -503,18 +523,18 @@ impl SyncEngine {
             }
         }
 
-        let pt_bytes = Bytes::copy_from_slice(&pt_buf);
+        let pt_zero = Arc::new(Zeroizing::new(pt_buf.to_vec()));
         drop(pt_buf);
 
         self.cache
-            .insert(rec.file_id, desc.chunk_index, pt_bytes.clone());
+            .insert_zeroizing(rec.file_id, desc.chunk_index, Arc::clone(&pt_zero));
         self.meta
             .set_chunk_hydrated(rec.inode, desc.chunk_index, true)
             .await?;
         self.stats.chunks_hydrated.fetch_add(1, Ordering::Relaxed);
         self.stats.record_download(wire.len() as u64);
 
-        Ok(pt_bytes)
+        Ok(pt_zero)
     }
 
     async fn ensure_chunk_staged_for_partial_edit(
@@ -632,34 +652,45 @@ impl SyncEngine {
                         }
                     }
 
-                    let mut pt_buf = self.pool.acquire_buffer().await?;
+                    // Hydrate existing chunk (if needed) BEFORE acquiring the dual-buffer pair
+                    // so `hydrate_single_chunk` cannot contend for a third pool slot.
+                    let old_bytes = if !has_dirty_part {
+                        if let Some(old_desc) = old_by_idx.get(&chunk_index) {
+                            Some(
+                                self.hydrate_single_chunk(&rec_snapshot, &dek, old_desc)
+                                    .await?,
+                            )
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    let mut pair = self.pool.acquire_pair().await?;
                     if self
                         .cache
-                        .read_dirty_chunk_into(inode, chunk_index, &mut pt_buf)
+                        .read_dirty_chunk_into(inode, chunk_index, &mut pair.pt)
                         .await?
                         .is_some()
                     {
-                        pt_buf.resize(expected_len, 0);
-                    } else if let Some(old_desc) = old_by_idx.get(&chunk_index) {
-                        let old_bytes = self
-                            .hydrate_single_chunk(&rec_snapshot, &dek, old_desc)
-                            .await?;
-                        pt_buf.clear();
-                        pt_buf.extend_from_slice(&old_bytes);
-                        pt_buf.resize(expected_len, 0);
+                        pair.pt.resize(expected_len, 0);
+                    } else if let Some(ref prev) = old_bytes {
+                        pair.pt.clear();
+                        pair.pt.extend_from_slice(prev);
+                        pair.pt.resize(expected_len, 0);
                     } else {
-                        pt_buf.clear();
-                        pt_buf.resize(expected_len, 0);
+                        pair.pt.clear();
+                        pair.pt.resize(expected_len, 0);
                     }
 
-                    let blake3_hash = *blake3::hash(&pt_buf).as_bytes();
-                    self.cache.insert(
+                    let blake3_hash = *blake3::hash(&pair.pt).as_bytes();
+                    self.cache.insert_zeroizing(
                         rec_snapshot.file_id,
                         chunk_index,
-                        Bytes::copy_from_slice(&pt_buf),
+                        Arc::new(Zeroizing::new(pair.pt.to_vec())),
                     );
 
-                    let mut wire_buf = self.pool.acquire_buffer().await?;
                     let aad = ChunkAad {
                         file_id: rec_snapshot.file_id,
                         chunk_index,
@@ -668,15 +699,14 @@ impl SyncEngine {
                     let hdr = self.crypto.encrypt_chunk_into(
                         &dek,
                         aad,
-                        &pt_buf,
-                        &mut wire_buf,
+                        &pair.pt,
+                        &mut pair.wire,
                     )?;
-                    drop(pt_buf);
+                    let wire_bytes = Bytes::copy_from_slice(&pair.wire);
+                    drop(pair);
 
                     let blob_id = Uuid::new_v4();
                     let blob_key = BlobObjectKey::from_uuid(blob_id);
-                    let wire_bytes = Bytes::copy_from_slice(&wire_buf);
-                    drop(wire_buf);
 
                     let placement = self
                         .storage
@@ -727,7 +757,58 @@ impl SyncEngine {
         Ok(())
     }
 
-    async fn publish_manifest_locked(&self) -> ZeroVaultResult<u64> {
+    async fn refresh_committed_nodes_snapshot(&self) -> ZeroVaultResult<()> {
+        let all_inodes = self.meta.list_all_inodes().await?;
+        let mut next_map = HashMap::new();
+        for rec in all_inodes {
+            if rec.inode == ROOT_INODE || rec.hydration == HydrationState::DirtyLocal {
+                continue;
+            }
+            if let Some(node) = self.build_manifest_node(&rec).await? {
+                next_map.insert(rec.inode, node);
+            }
+        }
+        *self.committed_nodes.lock() = next_map;
+        Ok(())
+    }
+
+    async fn build_manifest_node(&self, rec: &InodeRecord) -> ZeroVaultResult<Option<ManifestNode>> {
+        let chunks = if rec.kind == EntryKind::File {
+            let list = self.meta.list_chunks(rec.inode).await?;
+            if rec.size > 0 && list.is_empty() {
+                return Ok(None);
+            }
+            list.into_iter()
+                .map(|c| ChunkRef {
+                    chunk_index: c.chunk_index,
+                    blob_id: c.blob_id,
+                    plaintext_len: c.plaintext_len,
+                    ciphertext_len: c.ciphertext_len,
+                    blake3_plaintext: c.blake3_plaintext,
+                    backend_ids: c.backend_ids,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        Ok(Some(ManifestNode {
+            inode: rec.inode,
+            parent_inode: rec.parent_inode,
+            file_id: rec.file_id,
+            name: rec.name.clone(),
+            kind: rec.kind,
+            size: rec.size,
+            mode: rec.mode,
+            modified_at: rec.modified_at,
+            created_at: rec.created_at,
+            version: rec.version,
+            wrapped_dek: rec.wrapped_dek.clone(),
+            chunks,
+        }))
+    }
+
+    async fn publish_manifest_locked(&self, just_uploaded: &[InodeId]) -> ZeroVaultResult<u64> {
         let vault_id = self
             .crypto
             .vault_id()
@@ -747,46 +828,31 @@ impl SyncEngine {
             ));
         }
 
+        let uploaded_set: HashSet<InodeId> = just_uploaded.iter().copied().collect();
         let next_rev = cur_rev.saturating_add(1);
         let all_inodes = self.meta.list_all_inodes().await?;
         let mut nodes = Vec::with_capacity(all_inodes.len());
+        let mut next_committed = HashMap::with_capacity(all_inodes.len());
 
         for rec in all_inodes {
             if rec.inode == ROOT_INODE {
                 continue;
             }
-            let chunks = if rec.kind == EntryKind::File {
-                self.meta
-                    .list_chunks(rec.inode)
-                    .await?
-                    .into_iter()
-                    .map(|c| ChunkRef {
-                        chunk_index: c.chunk_index,
-                        blob_id: c.blob_id,
-                        plaintext_len: c.plaintext_len,
-                        ciphertext_len: c.ciphertext_len,
-                        blake3_plaintext: c.blake3_plaintext,
-                        backend_ids: c.backend_ids,
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
+            let is_ready = uploaded_set.contains(&rec.inode)
+                || rec.hydration != HydrationState::DirtyLocal
+                || rec.kind == EntryKind::Directory;
 
-            nodes.push(ManifestNode {
-                inode: rec.inode,
-                parent_inode: rec.parent_inode,
-                file_id: rec.file_id,
-                name: rec.name,
-                kind: rec.kind,
-                size: rec.size,
-                mode: rec.mode,
-                modified_at: rec.modified_at,
-                created_at: rec.created_at,
-                version: rec.version,
-                wrapped_dek: rec.wrapped_dek,
-                chunks,
-            });
+            if is_ready {
+                if let Some(node) = self.build_manifest_node(&rec).await? {
+                    next_committed.insert(rec.inode, node.clone());
+                    nodes.push(node);
+                }
+            } else if let Some(prev_node) = self.committed_nodes.lock().get(&rec.inode).cloned() {
+                // Preserve the previously committed consistent snapshot for concurrently
+                // modified files whose new chunks have not yet been uploaded.
+                next_committed.insert(rec.inode, prev_node.clone());
+                nodes.push(prev_node);
+            }
         }
 
         let parent_manifest_id = *self.last_manifest_id.lock();
@@ -815,6 +881,7 @@ impl SyncEngine {
             .update_manifest_cursor(next_rev, head_ver.etag)
             .await?;
         *self.last_manifest_id.lock() = Some(snapshot_id);
+        *self.committed_nodes.lock() = next_committed;
         Ok(next_rev)
     }
 
@@ -876,6 +943,7 @@ impl VfsBackend for SyncEngine {
     }
 
     async fn read_range(&self, inode: InodeId, offset: u64, len: usize) -> ZeroVaultResult<Bytes> {
+        self.ensure_unlocked()?;
         let rec = self.getattr(inode).await?;
         if rec.kind == EntryKind::Directory {
             return Err(ZeroVaultError::IsADirectory(inode));
@@ -965,6 +1033,7 @@ impl VfsBackend for SyncEngine {
     }
 
     async fn write_range(&self, inode: InodeId, offset: u64, data: &[u8]) -> ZeroVaultResult<usize> {
+        self.ensure_unlocked()?;
         let inode_lock = self.inode_lock(inode);
         let _inode_guard = inode_lock.lock().await;
 
@@ -1030,6 +1099,7 @@ impl VfsBackend for SyncEngine {
     }
 
     async fn create_entry(&self, spec: CreateEntrySpec) -> ZeroVaultResult<InodeRecord> {
+        self.ensure_unlocked()?;
         validate_entry_name(&spec.name)?;
         let parent = self.getattr(spec.parent_inode).await?;
         if parent.kind != EntryKind::Directory {
@@ -1076,6 +1146,7 @@ impl VfsBackend for SyncEngine {
         name: &str,
         mode: u32,
     ) -> ZeroVaultResult<InodeRecord> {
+        self.ensure_unlocked()?;
         validate_entry_name(name)?;
         let parent = self.getattr(parent_inode).await?;
         if parent.kind != EntryKind::Directory {
@@ -1112,6 +1183,7 @@ impl VfsBackend for SyncEngine {
     }
 
     async fn unlink(&self, parent_inode: InodeId, name: &str) -> ZeroVaultResult<()> {
+        self.ensure_unlocked()?;
         validate_entry_name(name)?;
         let entry = self.lookup(parent_inode, name).await?;
         if entry.kind == EntryKind::Directory {
@@ -1122,6 +1194,7 @@ impl VfsBackend for SyncEngine {
         let _inode_guard = inode_lock.lock().await;
 
         self.cache.invalidate_file(entry.file_id);
+        self.committed_nodes.lock().remove(&entry.inode);
         self.cache.clear_dirty_inode(entry.inode).await?;
         self.complete_inode_dirty_ops(entry.inode).await?;
         self.meta
@@ -1131,6 +1204,7 @@ impl VfsBackend for SyncEngine {
     }
 
     async fn rmdir(&self, parent_inode: InodeId, name: &str) -> ZeroVaultResult<()> {
+        self.ensure_unlocked()?;
         validate_entry_name(name)?;
         let entry = self.lookup(parent_inode, name).await?;
         if entry.kind != EntryKind::Directory {
@@ -1140,6 +1214,7 @@ impl VfsBackend for SyncEngine {
             return Err(ZeroVaultError::DirectoryNotEmpty(entry.inode));
         }
 
+        self.committed_nodes.lock().remove(&entry.inode);
         self.complete_inode_dirty_ops(entry.inode).await?;
         self.meta
             .enqueue_dirty(entry.inode, DirtyOpKind::Delete, &entry.virtual_path)
@@ -1154,6 +1229,7 @@ impl VfsBackend for SyncEngine {
         new_parent_inode: InodeId,
         new_name: &str,
     ) -> ZeroVaultResult<InodeRecord> {
+        self.ensure_unlocked()?;
         validate_entry_name(name)?;
         validate_entry_name(new_name)?;
         let new_parent = self.getattr(new_parent_inode).await?;
@@ -1213,6 +1289,7 @@ impl VfsBackend for SyncEngine {
     }
 
     async fn setattr(&self, inode: InodeId, attrs: SetAttrSpec) -> ZeroVaultResult<InodeRecord> {
+        self.ensure_unlocked()?;
         let inode_lock = self.inode_lock(inode);
         let _inode_guard = inode_lock.lock().await;
 
@@ -1257,6 +1334,7 @@ impl VfsBackend for SyncEngine {
     }
 
     async fn flush(&self, inode: InodeId) -> ZeroVaultResult<()> {
+        self.ensure_unlocked()?;
         let rec = self.getattr(inode).await?;
         let has_dirty_parts = if rec.kind == EntryKind::File {
             self.cache.has_any_dirty_chunks(inode).await?
@@ -1285,7 +1363,7 @@ impl VfsBackend for SyncEngine {
             return Err(err);
         }
 
-        if let Err(err) = self.publish_manifest_locked().await {
+        if let Err(err) = self.publish_manifest_locked(&[inode]).await {
             self.mark_inode_dirty_retry(inode, &err.to_string()).await;
             return Err(err);
         }
@@ -1302,6 +1380,7 @@ impl VfsBackend for SyncEngine {
     }
 
     async fn pin(&self, inode: InodeId) -> ZeroVaultResult<()> {
+        self.ensure_unlocked()?;
         let rec = self.getattr(inode).await?;
         if rec.kind == EntryKind::File {
             let chunks = self.meta.list_chunks(inode).await?;
@@ -1338,6 +1417,7 @@ impl VfsBackend for SyncEngine {
     }
 
     async fn unpin(&self, inode: InodeId) -> ZeroVaultResult<()> {
+        self.ensure_unlocked()?;
         let rec = self.getattr(inode).await?;
         if rec.hydration == HydrationState::DirtyLocal {
             return self
@@ -1366,6 +1446,7 @@ impl VfsBackend for SyncEngine {
     }
 
     async fn dehydrate(&self, inode: InodeId) -> ZeroVaultResult<()> {
+        self.ensure_unlocked()?;
         let inode_lock = self.inode_lock(inode);
         let _inode_guard = inode_lock.lock().await;
 

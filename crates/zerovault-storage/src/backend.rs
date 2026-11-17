@@ -5,7 +5,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use futures::TryStreamExt;
@@ -14,8 +14,9 @@ use parking_lot::RwLock;
 use uuid::Uuid;
 
 use zerovault_types::{
-    BackendConfig, BackendHealth, BackendKind, BackendQuota, CryptoEngine, RedactedSecret,
-    RemoteVersion, ReplicaTarget, SecretStore, ZeroVaultError, ZeroVaultResult,
+    BackendConfig, BackendHealth, BackendKind, BackendQuota, CryptoEngine,
+    MAX_ENCRYPTED_CHUNK_SIZE, RedactedSecret, RemoteVersion, ReplicaTarget, SecretStore,
+    VAULT_HEADER_LEN, VAULT_HEADER_OBJECT_KEY, ZeroVaultError, ZeroVaultResult,
     validate_remote_object_key,
 };
 
@@ -23,6 +24,18 @@ use crate::oauth::{DEFAULT_TOKEN_SECRET_SERVICE, OAuthTokenBundle, load_tokens};
 
 /// Default fallback capacity reported when `BackendConfig::quota_limit_bytes` is `None` (1 TiB).
 pub const DEFAULT_UNBOUNDED_QUOTA_BYTES: u64 = 1024 * 1024 * 1024 * 1024;
+/// Maximum allowed wire size for any sealed manifest snapshot downloaded from remote storage (64 MiB).
+pub const MAX_SEALED_MANIFEST_BYTES: usize = 64 * 1024 * 1024;
+
+fn max_object_bytes_for_key(object_key: &str) -> usize {
+    if object_key == VAULT_HEADER_OBJECT_KEY {
+        VAULT_HEADER_LEN
+    } else if object_key.starts_with("blobs/") {
+        MAX_ENCRYPTED_CHUNK_SIZE
+    } else {
+        MAX_SEALED_MANIFEST_BYTES
+    }
+}
 
 const NO_LATENCY_SENTINEL: u64 = u64::MAX;
 
@@ -527,19 +540,55 @@ impl CloudBackend {
         }
     }
 
-    /// Downloads an encrypted object after validating zero-knowledge key grammar.
+    /// Downloads an encrypted object with bounded streaming byte caps after validating
+    /// zero-knowledge key grammar.
     pub async fn get_object(&self, object_key: &str) -> ZeroVaultResult<Bytes> {
         validate_remote_object_key(object_key)?;
+        let max_bytes = max_object_bytes_for_key(object_key);
         let started = Instant::now();
-        match self.operator.read(object_key).await {
-            Ok(buf) => {
-                self.record_success(started.elapsed());
-                Ok(buf.to_bytes())
-            }
+        let reader = match self.operator.reader(object_key).await {
+            Ok(r) => r,
             Err(err) => {
                 let mapped = map_opendal_error(&self.config.id, object_key, err);
                 self.record_backend_failure(&mapped);
-                Err(mapped)
+                return Err(mapped);
+            }
+        };
+        let mut stream = match reader.into_stream(..).await {
+            Ok(s) => s,
+            Err(err) => {
+                let mapped = map_opendal_error(&self.config.id, object_key, err);
+                self.record_backend_failure(&mapped);
+                return Err(mapped);
+            }
+        };
+
+        let mut out = BytesMut::new();
+        loop {
+            match stream.try_next().await {
+                Ok(Some(chunk)) => {
+                    let chunk_len = chunk.len();
+                    let next_total = out.len().saturating_add(chunk_len);
+                    if next_total > max_bytes {
+                        let err = ZeroVaultError::InvalidWireFormat(format!(
+                            "remote object '{object_key}' exceeded maximum allowed size ({max_bytes} bytes)"
+                        ));
+                        self.record_backend_failure(&err);
+                        return Err(err);
+                    }
+                    for slice in chunk {
+                        out.put_slice(&slice);
+                    }
+                }
+                Ok(None) => {
+                    self.record_success(started.elapsed());
+                    return Ok(out.freeze());
+                }
+                Err(err) => {
+                    let mapped = map_opendal_error(&self.config.id, object_key, err);
+                    self.record_backend_failure(&mapped);
+                    return Err(mapped);
+                }
             }
         }
     }

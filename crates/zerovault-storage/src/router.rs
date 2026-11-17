@@ -1,7 +1,7 @@
 //! Multi-cloud [`StorageRouter`] implementing [`StorageRouterTrait`] across Targeted,
 //! Mirrored (RAID-1), and Quota-Pooled storage policies.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -16,6 +16,18 @@ use zerovault_types::{
 };
 
 use crate::backend::CloudBackend;
+
+const MIRROR_CAS_PREFIX: &str = "zv-mirror-cas:";
+
+fn encode_mirrored_etag(map: &BTreeMap<BackendId, String>) -> String {
+    let json = serde_json::to_string(map).unwrap_or_else(|_| "{}".to_owned());
+    format!("{MIRROR_CAS_PREFIX}{json}")
+}
+
+fn decode_mirrored_etag(etag: &str) -> Option<BTreeMap<BackendId, String>> {
+    let raw = etag.strip_prefix(MIRROR_CAS_PREFIX)?;
+    serde_json::from_str::<BTreeMap<BackendId, String>>(raw).ok()
+}
 
 /// Strategy used by [`RoutingPolicy::QuotaPooled`] when choosing among eligible healthy accounts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -490,6 +502,53 @@ impl StorageRouterTrait for StorageRouter {
     ) -> ZeroVaultResult<Option<RemoteVersion>> {
         validate_remote_object_key(object_key)?;
 
+        if preferred_backends.is_empty()
+            && let RoutingPolicy::Mirrored { backends, .. } = &self.policy
+        {
+            let mut handles = Vec::with_capacity(backends.len());
+            for id in backends {
+                if let Some(b) = self.backends.get(id) {
+                    handles.push((id.clone(), b.clone()));
+                }
+            }
+            let stat_futs = handles.into_iter().map(|(id, backend)| {
+                let key = object_key.to_owned();
+                async move { (id, backend.stat_object(&key).await) }
+            });
+
+            let mut etags = BTreeMap::new();
+            let mut sample: Option<RemoteVersion> = None;
+            let mut first_err: Option<ZeroVaultError> = None;
+            for (id, res) in join_all(stat_futs).await {
+                match res {
+                    Ok(Some(ver)) => {
+                        if let Some(ref etag) = ver.etag {
+                            etags.insert(id, etag.clone());
+                        }
+                        if sample.is_none() {
+                            sample = Some(ver);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        if first_err.is_none() {
+                            first_err = Some(err);
+                        }
+                    }
+                }
+            }
+            if let Some(mut ver) = sample {
+                if !etags.is_empty() {
+                    ver.etag = Some(encode_mirrored_etag(&etags));
+                }
+                return Ok(Some(ver));
+            }
+            return match first_err {
+                Some(err) => Err(err),
+                None => Ok(None),
+            };
+        }
+
         let mut seen = HashSet::new();
         let mut candidates = Vec::new();
         for id in preferred_backends {
@@ -554,29 +613,39 @@ impl StorageRouterTrait for StorageRouter {
                     .await
             }
             RoutingPolicy::Mirrored { backends, min_ack } => {
-                let handles: Vec<Arc<CloudBackend>> = backends
+                let handles: Vec<(BackendId, Arc<CloudBackend>)> = backends
                     .iter()
                     .map(|id| {
-                        self.backends.get(id).cloned().ok_or_else(|| {
+                        let b = self.backends.get(id).cloned().ok_or_else(|| {
                             ZeroVaultError::ConfigError(format!("unknown mirror backend '{id}'"))
-                        })
+                        })?;
+                        Ok((id.clone(), b))
                     })
                     .collect::<ZeroVaultResult<Vec<_>>>()?;
 
-                if let Some(expected) = expected_etag {
-                    let stat_futs = handles.iter().map(|b| {
+                let expected_map = expected_etag.and_then(decode_mirrored_etag);
+
+                if let Some(expected_raw) = expected_etag {
+                    let stat_futs = handles.iter().map(|(id, b)| {
                         let key = object_key.to_owned();
+                        let id = id.clone();
                         let backend = b.clone();
-                        async move { backend.stat_object(&key).await }
+                        async move { (id, backend.stat_object(&key).await) }
                     });
                     let mut saw_present_match = false;
                     let mut saw_none = false;
-                    for res in join_all(stat_futs).await {
+                    for (id, res) in join_all(stat_futs).await {
+                        let expected_for_mirror = match expected_map.as_ref() {
+                            Some(map) => map.get(&id).map(String::as_str),
+                            None => Some(expected_raw),
+                        };
                         match res {
                             Ok(Some(ver)) => {
-                                if ver.etag.as_deref() != Some(expected) {
+                                if let Some(exp) = expected_for_mirror
+                                    && ver.etag.as_deref() != Some(exp)
+                                {
                                     return Err(ZeroVaultError::StorageConflict(format!(
-                                        "manifest ETag mismatch for {object_key}"
+                                        "manifest ETag mismatch for {object_key} on mirror '{id}'"
                                     )));
                                 }
                                 saw_present_match = true;
@@ -585,7 +654,11 @@ impl StorageRouterTrait for StorageRouter {
                                 saw_none = true;
                             }
                             Err(err) => {
-                                tracing::warn!(error = %err, "mirror stat during manifest CAS failed");
+                                tracing::warn!(
+                                    mirror = %id,
+                                    error = %err,
+                                    "mirror stat during manifest CAS failed"
+                                );
                             }
                         }
                     }
@@ -596,19 +669,34 @@ impl StorageRouterTrait for StorageRouter {
                     }
                 }
 
-                let write_futs = handles.into_iter().map(|b| {
+                let write_futs = handles.into_iter().map(|(id, b)| {
                     let key = object_key.to_owned();
                     let payload = sealed_manifest.clone();
-                    async move { b.put_object_cas(&key, payload, expected_etag).await }
+                    let per_mirror_expected = expected_etag.and_then(|raw| match expected_map.as_ref() {
+                        Some(map) => map.get(&id).cloned(),
+                        None => Some(raw.to_owned()),
+                    });
+                    async move {
+                        let res = b
+                            .put_object_cas(&key, payload, per_mirror_expected.as_deref())
+                            .await;
+                        (id, res)
+                    }
                 });
                 let results = join_all(write_futs).await;
                 let mut versions = Vec::new();
+                let mut new_etags = BTreeMap::new();
                 let mut conflict_err: Option<ZeroVaultError> = None;
                 let mut first_err: Option<ZeroVaultError> = None;
 
-                for res in results {
+                for (id, res) in results {
                     match res {
-                        Ok(ver) => versions.push(ver),
+                        Ok(ver) => {
+                            if let Some(ref etag) = ver.etag {
+                                new_etags.insert(id, etag.clone());
+                            }
+                            versions.push(ver);
+                        }
                         Err(err @ ZeroVaultError::StorageConflict(_)) => {
                             if conflict_err.is_none() {
                                 conflict_err = Some(err);
@@ -623,12 +711,16 @@ impl StorageRouterTrait for StorageRouter {
                 }
 
                 if versions.len() >= *min_ack {
-                    Ok(versions.into_iter().next().unwrap_or(RemoteVersion {
+                    let mut chosen = versions.into_iter().next().unwrap_or(RemoteVersion {
                         object_key: object_key.to_owned(),
                         etag: None,
                         content_length: sealed_manifest.len() as u64,
                         last_modified: None,
-                    }))
+                    });
+                    if !new_etags.is_empty() {
+                        chosen.etag = Some(encode_mirrored_etag(&new_etags));
+                    }
+                    Ok(chosen)
                 } else if let Some(err) = conflict_err {
                     Err(err)
                 } else {

@@ -173,19 +173,27 @@ fn is_loopback_ip(ip: IpAddr) -> bool {
 }
 
 #[cfg(unix)]
-fn current_uid_string() -> String {
+fn current_uid_raw() -> u32 {
     #[cfg(target_os = "linux")]
     if let Ok(meta) = std::fs::metadata("/proc/self") {
         use std::os::unix::fs::MetadataExt;
-        return meta.uid().to_string();
+        return meta.uid();
     }
     if let Some(home) = dirs::home_dir()
         && let Ok(meta) = std::fs::metadata(home)
     {
         use std::os::unix::fs::MetadataExt;
-        return meta.uid().to_string();
+        return meta.uid();
     }
-    std::env::var("UID").unwrap_or_else(|_| "0".to_owned())
+    std::env::var("UID")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0)
+}
+
+#[cfg(unix)]
+fn current_uid_string() -> String {
+    current_uid_raw().to_string()
 }
 
 #[cfg(unix)]
@@ -304,16 +312,38 @@ pub async fn read_json_frame<R: AsyncRead + Unpin, T: serde::de::DeserializeOwne
 
 #[cfg(unix)]
 fn prepare_unix_socket_dir_and_path(path: &Path) -> ZeroVaultResult<()> {
-    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+    use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
-        if !parent.exists() {
-            std::fs::create_dir_all(parent)?;
-        }
-        if parent != Path::new("/") && parent != Path::new("/tmp") && parent != Path::new("/var/tmp")
-        {
+        let is_system_tmp =
+            parent == Path::new("/") || parent == Path::new("/tmp") || parent == Path::new("/var/tmp");
+        if !is_system_tmp {
+            match std::fs::symlink_metadata(parent) {
+                Ok(meta) => {
+                    if meta.file_type().is_symlink() || !meta.file_type().is_dir() {
+                        return Err(ZeroVaultError::IpcError(format!(
+                            "IPC socket directory {} must be a real directory, not a symlink",
+                            parent.display()
+                        )));
+                    }
+                    let expected_uid = current_uid_raw();
+                    if meta.uid() != expected_uid {
+                        return Err(ZeroVaultError::IpcError(format!(
+                            "IPC socket directory {} owned by uid {}, expected {expected_uid}",
+                            parent.display(),
+                            meta.uid()
+                        )));
+                    }
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    let mut builder = std::fs::DirBuilder::new();
+                    builder.recursive(true).mode(0o700);
+                    builder.create(parent)?;
+                }
+                Err(err) => return Err(err.into()),
+            }
             std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
         }
     }
