@@ -195,6 +195,26 @@ fn split_parent_and_name(virtual_path: &str) -> Option<(&str, &str)> {
     Some((parent, name))
 }
 
+fn try_detach_stale_fuse_mount(mount_point: &std::path::Path) {
+    for bin in ["fusermount3", "fusermount"] {
+        match std::process::Command::new(bin)
+            .args(["-u", "-z"])
+            .arg(mount_point)
+            .status()
+        {
+            Ok(status) if status.success() => {
+                tracing::info!(
+                    tool = bin,
+                    mount_point = %mount_point.display(),
+                    "detached stale FUSE mount before remounting"
+                );
+                return;
+            }
+            Ok(_) | Err(_) => {}
+        }
+    }
+}
+
 #[async_trait]
 impl VirtualDrive for LinuxFuseDrive {
     async fn mount(&self, mount_point: PathBuf) -> ZeroVaultResult<()> {
@@ -205,9 +225,32 @@ impl VirtualDrive for LinuxFuseDrive {
             ));
         }
 
-        let meta = tokio::fs::metadata(&mount_point)
-            .await
-            .map_err(|err| ZeroVaultError::VfsError(format!("invalid mount point: {err}")))?;
+        let meta = match tokio::fs::symlink_metadata(&mount_point).await {
+            Ok(meta) => meta,
+            Err(err) if err.raw_os_error() == Some(libc::ENOTCONN) => {
+                // Recover from a stale FUSE mount left behind after an unclean daemon crash.
+                let mp_detach = mount_point.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    try_detach_stale_fuse_mount(&mp_detach);
+                })
+                .await;
+                tokio::fs::symlink_metadata(&mount_point).await.map_err(|e| {
+                    ZeroVaultError::VfsError(format!(
+                        "invalid mount point after stale FUSE cleanup: {e}"
+                    ))
+                })?
+            }
+            Err(err) => {
+                return Err(ZeroVaultError::VfsError(format!(
+                    "invalid mount point: {err}"
+                )));
+            }
+        };
+        if meta.file_type().is_symlink() {
+            return Err(ZeroVaultError::VfsError(
+                "mount point must be a real directory, not a symlink".into(),
+            ));
+        }
         if !meta.is_dir() {
             return Err(ZeroVaultError::VfsError(
                 "mount point must be an existing directory".into(),

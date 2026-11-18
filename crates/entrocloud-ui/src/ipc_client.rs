@@ -23,7 +23,7 @@ pub const WINDOWS_CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 const FRAME_HEADER_LEN: usize = 4;
 const TCP_CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
-const IO_READ_WRITE_TIMEOUT: Duration = Duration::from_secs(200);
+const IO_READ_WRITE_TIMEOUT: Duration = Duration::from_secs(3600);
 
 /// Validated local IPC endpoint targeting `entrocloudd`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -486,6 +486,14 @@ pub fn spawn_detached_process(
         cmd.creation_flags(WINDOWS_CREATE_NO_WINDOW);
     }
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Isolate the detached daemon/UI in its own process group so parent terminal signals
+        // (`SIGINT` / `SIGHUP`) do not terminate the background process.
+        cmd.process_group(0);
+    }
+
     let _child = cmd.spawn().map_err(|err| {
         ZeroVaultError::IpcError(format!(
             "failed spawning background process {}: {err}",
@@ -497,31 +505,16 @@ pub fn spawn_detached_process(
 
 fn spawn_detached_daemon(daemon_exe: &Path, endpoint: &IpcEndpoint) -> ZeroVaultResult<()> {
     let ep_str = endpoint.to_string();
-    let is_default = *endpoint == IpcEndpoint::default();
-    if is_default {
-        // Explicitly pass the default EntroCloud endpoint as well so older daemon builds default cleanly.
-        spawn_detached_process(
-            daemon_exe,
-            &["--ipc", ep_str.as_str()],
-            &[
-                ("ENTROCLOUD_IPC", ep_str.as_str()),
-                ("ENTROCLOUD_ENDPOINT", ep_str.as_str()),
-                ("ZEROVAULT_IPC", ep_str.as_str()),
-                ("ZEROVAULT_ENDPOINT", ep_str.as_str()),
-            ],
-        )
-    } else {
-        spawn_detached_process(
-            daemon_exe,
-            &["--ipc", ep_str.as_str()],
-            &[
-                ("ENTROCLOUD_IPC", ep_str.as_str()),
-                ("ENTROCLOUD_ENDPOINT", ep_str.as_str()),
-                ("ZEROVAULT_IPC", ep_str.as_str()),
-                ("ZEROVAULT_ENDPOINT", ep_str.as_str()),
-            ],
-        )
-    }
+    spawn_detached_process(
+        daemon_exe,
+        &["--ipc", ep_str.as_str()],
+        &[
+            ("ENTROCLOUD_IPC", ep_str.as_str()),
+            ("ENTROCLOUD_ENDPOINT", ep_str.as_str()),
+            ("ZEROVAULT_IPC", ep_str.as_str()),
+            ("ZEROVAULT_ENDPOINT", ep_str.as_str()),
+        ],
+    )
 }
 
 #[cfg(target_os = "windows")]

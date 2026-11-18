@@ -36,9 +36,18 @@ pub const TOUR_STEPS: [(usize, &str, ThemePreference); 8] = [
     ),
 ];
 
-/// State machine driving `--screenshot-tour <OUTPUT_DIR>`.
+/// Exact 4 modal verification screenshots captured during `--screenshot-modals <OUTPUT_DIR>`.
+pub const MODAL_TOUR_STEPS: [(usize, &str, ThemePreference); 4] = [
+    (0, "01_add_backup_modal_light.png", ThemePreference::Light),
+    (1, "02_add_backup_modal_dark.png", ThemePreference::Dark),
+    (2, "03_private_note_modal_light.png", ThemePreference::Light),
+    (3, "04_restore_modal_light.png", ThemePreference::Light),
+];
+
+/// State machine driving `--screenshot-tour <OUTPUT_DIR>` or `--screenshot-modals <OUTPUT_DIR>`.
 pub struct ScreenshotTourDriver {
     pub output_dir: PathBuf,
+    pub modal_mode: bool,
     pub step_idx: usize,
     pub settle_frames: u32,
     pub screenshot_requested: bool,
@@ -52,6 +61,7 @@ impl ScreenshotTourDriver {
     pub fn new(output_dir: PathBuf) -> Self {
         Self {
             output_dir,
+            modal_mode: false,
             step_idx: 0,
             settle_frames: 0,
             screenshot_requested: false,
@@ -61,11 +71,25 @@ impl ScreenshotTourDriver {
         }
     }
 
+    #[must_use]
+    pub fn new_modals(output_dir: PathBuf) -> Self {
+        Self {
+            output_dir,
+            modal_mode: true,
+            step_idx: 0,
+            settle_frames: 0,
+            screenshot_requested: false,
+            wait_frames: 0,
+            written_files: Vec::with_capacity(MODAL_TOUR_STEPS.len()),
+            error: None,
+        }
+    }
+
     /// Returns `true` when step 7 (`08_sharing_and_settings_light.png`) is active so Sharing & Settings
     /// render side-by-side in 2 columns.
     #[must_use]
     pub fn is_split_sharing_and_settings(&self) -> bool {
-        self.step_idx == 7
+        !self.modal_mode && self.step_idx == 7
     }
 }
 

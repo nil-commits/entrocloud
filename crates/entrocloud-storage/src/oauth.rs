@@ -425,6 +425,17 @@ impl LoopbackOAuthListener {
         for scope in &config.scopes {
             auth_req = auth_req.add_scope(Scope::new(scope.clone()));
         }
+        match config.preset {
+            OAuthProviderPreset::GoogleDrive => {
+                auth_req = auth_req
+                    .add_extra_param("access_type", "offline")
+                    .add_extra_param("prompt", "consent");
+            }
+            OAuthProviderPreset::Dropbox => {
+                auth_req = auth_req.add_extra_param("token_access_type", "offline");
+            }
+            OAuthProviderPreset::OneDrive => {}
+        }
         let (authorize_url, csrf_token) = auth_req.url();
 
         tracing::info!(
@@ -1060,6 +1071,47 @@ mod tests {
         assert!(!constant_time_csrf_eq("alpha-state", "alpha-statE"));
         assert!(!constant_time_csrf_eq("alpha-state", "short"));
         let _client = build_ssrf_safe_http_client()?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unit_oauth_offline_refresh_params_for_gdrive_and_dropbox() -> ZeroVaultResult<()> {
+        let gdrive = LoopbackOAuthListener::bind_ephemeral(OAuthProviderConfig::for_preset(
+            OAuthProviderPreset::GoogleDrive,
+            "test-client-id",
+            None,
+        ))
+        .await?;
+        let gdrive_params: std::collections::HashMap<String, String> = gdrive
+            .authorize_url()
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        assert_eq!(
+            gdrive_params.get("access_type").map(String::as_str),
+            Some("offline")
+        );
+        assert_eq!(
+            gdrive_params.get("prompt").map(String::as_str),
+            Some("consent")
+        );
+
+        let dropbox = LoopbackOAuthListener::bind_ephemeral(OAuthProviderConfig::for_preset(
+            OAuthProviderPreset::Dropbox,
+            "test-client-id",
+            None,
+        ))
+        .await?;
+        let dropbox_params: std::collections::HashMap<String, String> = dropbox
+            .authorize_url()
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        assert_eq!(
+            dropbox_params.get("token_access_type").map(String::as_str),
+            Some("offline")
+        );
+
         Ok(())
     }
 }

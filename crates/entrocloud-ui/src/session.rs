@@ -114,7 +114,9 @@ pub fn create_unique_preview_subdir(session_root: &Path) -> Result<PathBuf, Stri
 
 /// Overwrites all `len` bytes of a regular file on disk with `0x00`, flushes data to storage,
 /// and unlinks the file.
-pub fn zero_wipe_and_remove_file(path: &Path, len: u64, zero_buf: &[u8]) {
+///
+/// Returns `true` only if both the zero-overwrite (when `len > 0`) and `remove_file` succeeded.
+pub fn zero_wipe_and_remove_file(path: &Path, len: u64, zero_buf: &[u8]) -> bool {
     let chunk_buf = if zero_buf.is_empty() {
         &[0u8; 4096][..]
     } else {
@@ -131,22 +133,39 @@ pub fn zero_wipe_and_remove_file(path: &Path, len: u64, zero_buf: &[u8]) {
         }
     }
 
-    if len > 0
-        && let Ok(mut file) = std::fs::OpenOptions::new().write(true).open(path)
-    {
-        let mut remaining = len;
-        while remaining > 0 {
-            let n = usize::try_from(remaining)
-                .unwrap_or(usize::MAX)
-                .min(chunk_buf.len());
-            if file.write_all(&chunk_buf[..n]).is_err() {
-                break;
-            }
-            remaining = remaining.saturating_sub(n as u64);
+    #[cfg(unix)]
+    if let Ok(meta) = std::fs::symlink_metadata(path) {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = meta.permissions().mode();
+        if mode & 0o200 == 0 {
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode | 0o200));
         }
-        let _ = file.sync_data();
     }
-    let _ = std::fs::remove_file(path);
+
+    let mut wipe_ok = true;
+    if len > 0 {
+        match std::fs::OpenOptions::new().write(true).open(path) {
+            Ok(mut file) => {
+                let mut remaining = len;
+                while remaining > 0 {
+                    let n = usize::try_from(remaining)
+                        .unwrap_or(usize::MAX)
+                        .min(chunk_buf.len());
+                    if file.write_all(&chunk_buf[..n]).is_err() {
+                        wipe_ok = false;
+                        break;
+                    }
+                    remaining = remaining.saturating_sub(n as u64);
+                }
+                let _ = file.sync_data();
+            }
+            Err(_) => {
+                wipe_ok = false;
+            }
+        }
+    }
+    let removed = std::fs::remove_file(path).is_ok();
+    wipe_ok && removed
 }
 
 /// Recursively zero-overwrites and deletes every regular file inside `session_root`
@@ -183,8 +202,9 @@ pub fn scrub_session_dir(session_root: &Path) -> usize {
                 let _ = std::fs::remove_file(&path);
             } else if ft.is_dir() {
                 stack.push(path);
-            } else if ft.is_file() {
-                zero_wipe_and_remove_file(&path, meta.len(), &zero_buf);
+            } else if ft.is_file()
+                && zero_wipe_and_remove_file(&path, meta.len(), &zero_buf)
+            {
                 wiped_files += 1;
             }
         }
@@ -476,11 +496,7 @@ pub fn open_in_os_default_app(path: &Path) -> Result<(), String> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        std::process::Command::new("xdg-open")
-            .arg(path)
-            .spawn()
-            .map_err(|err| format!("Failed launching xdg-open: {err}"))?;
-        Ok(())
+        spawn_xdg_open_detached(path.as_os_str(), "path")
     }
 }
 
@@ -531,10 +547,34 @@ pub fn open_https_url(url: &str) -> Result<(), String> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        std::process::Command::new("xdg-open")
-            .arg(trimmed)
-            .spawn()
-            .map_err(|err| format!("Failed launching browser: {err}"))?;
-        Ok(())
+        spawn_xdg_open_detached(std::ffi::OsStr::new(trimmed), "browser URL")
     }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn spawn_xdg_open_detached(target: &std::ffi::OsStr, kind_label: &str) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("xdg-open")
+        .arg(target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                format!("Failed opening {kind_label}: xdg-open was not found (install xdg-utils)")
+            } else {
+                format!("Failed launching xdg-open for {kind_label}: {err}")
+            }
+        })?;
+
+    // Reap the short-lived `xdg-open` wrapper asynchronously so we stay non-blocking
+    // on the UI thread without accumulating `<defunct>` zombie processes.
+    let _ = std::thread::Builder::new()
+        .name("ec-xdg-reap".to_owned())
+        .spawn(move || {
+            let _ = child.wait();
+        });
+    Ok(())
 }

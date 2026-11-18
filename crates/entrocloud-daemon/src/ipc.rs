@@ -1,7 +1,7 @@
 //! Owner-only local IPC framing and transport for `entrocloudd`, `ec`, and `entrocloud-ui`.
 //!
 //! Enforces:
-//! - 4-byte big-endian `u32` length prefix (`1..=MAX_IPC_FRAME_BYTES = 1 MiB` pre-allocation check)
+//! - 4-byte big-endian `u32` length prefix (`1..=MAX_IPC_FRAME_BYTES = 4 MiB` pre-allocation check)
 //!   with UTF-8 `serde_json` payloads wrapped in [`Zeroizing`].
 //! - [`MAX_CONCURRENT_IPC_CONNECTIONS`] (`64`) semaphore backpressure.
 //! - [`IPC_FRAME_IO_TIMEOUT`] (`30s`) frame read/write deadlines.
@@ -201,7 +201,7 @@ fn is_loopback_ip(ip: IpAddr) -> bool {
 
 /// Resolves the canonical Unix Domain Socket path for `entrocloudd`:
 /// `$XDG_RUNTIME_DIR/entrocloud/entrocloudd.sock`, falling back to
-/// `/run/user/<uid>/entrocloud/entrocloudd.sock`.
+/// `/tmp/entrocloud-<uid>/entrocloudd.sock`.
 #[must_use]
 pub fn default_unix_socket_path_for_uid(xdg_runtime_dir: Option<&Path>, uid: u32) -> PathBuf {
     if let Some(runtime_dir) = xdg_runtime_dir
@@ -209,9 +209,7 @@ pub fn default_unix_socket_path_for_uid(xdg_runtime_dir: Option<&Path>, uid: u32
     {
         return runtime_dir.join("entrocloud").join("entrocloudd.sock");
     }
-    PathBuf::from(format!("/run/user/{uid}"))
-        .join("entrocloud")
-        .join("entrocloudd.sock")
+    PathBuf::from(format!("/tmp/entrocloud-{uid}")).join("entrocloudd.sock")
 }
 
 #[cfg(unix)]
@@ -524,7 +522,11 @@ impl IpcServer {
                         path.display()
                     ))
                 })?;
-                set_unix_socket_permissions(&path)?;
+                if let Err(err) = set_unix_socket_permissions(&path) {
+                    drop(listener);
+                    let _ = std::fs::remove_file(&path);
+                    return Err(err);
+                }
                 Ok(Self {
                     endpoint: IpcEndpoint::UnixSocket(path.clone()),
                     listener: BoundListener::Unix { listener, path },
@@ -904,7 +906,11 @@ fn response_wait_timeout(req: &DaemonRequest) -> Duration {
             let secs = params.timeout_secs.unwrap_or(180).clamp(5, 600);
             Duration::from_secs(secs.saturating_add(30))
         }
-        DaemonRequest::ImportLocalFile { .. }
+        DaemonRequest::UnlockVault { .. }
+        | DaemonRequest::InitVault { .. }
+        | DaemonRequest::BenchCrypto { .. }
+        | DaemonRequest::RevokeKeyboxRecipient { .. }
+        | DaemonRequest::ImportLocalFile { .. }
         | DaemonRequest::ExportVaultFile { .. }
         | DaemonRequest::ImportCapabilityShare { .. }
         | DaemonRequest::RunBackupJob { .. }

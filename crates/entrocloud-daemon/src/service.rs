@@ -840,6 +840,7 @@ impl DaemonRuntimeBuilder {
             backup_cancel_flag: Arc::new(AtomicBool::new(false)),
             active_backup_job_id: SyncRwLock::new(None),
             active_activity: SyncRwLock::new(None),
+            oauth_exec_lock: AsyncMutex::new(()),
             oauth_cancel_flag: Arc::new(AtomicBool::new(false)),
             oauth_cancel_notify: Arc::new(Notify::new()),
             keybox_state: AsyncRwLock::new(persisted_keybox),
@@ -870,6 +871,7 @@ pub struct DaemonRuntime {
     backup_cancel_flag: Arc<AtomicBool>,
     active_backup_job_id: SyncRwLock<Option<String>>,
     active_activity: SyncRwLock<Option<String>>,
+    oauth_exec_lock: AsyncMutex<()>,
     oauth_cancel_flag: Arc<AtomicBool>,
     oauth_cancel_notify: Arc<Notify>,
     keybox_state: AsyncRwLock<PersistedKeyboxState>,
@@ -1233,7 +1235,7 @@ impl DaemonRuntime {
             (load_vault_header(&self.config.vault_header_path)?, false)
         } else {
             let cfg_snapshot = self.remotes_config.read().await.clone();
-            let Some(bootstrap_router) = self.build_concrete_router(&cfg_snapshot, false).await?
+            let Some(bootstrap_router) = self.build_bootstrap_router(&cfg_snapshot).await?
             else {
                 return Err(ZeroVaultError::ConfigError(format!(
                     "vault is not initialized locally (missing {}) and no remote backends are configured to fetch {}",
@@ -1365,24 +1367,31 @@ impl DaemonRuntime {
             self.cached_keybox_epoch.load(Ordering::Acquire).max(1)
         };
 
-        let remote_kb = match fetch_remote_keybox(
-            router.as_ref(),
-            self.crypto.as_ref(),
-            Some(vault_id),
-            pinned_owner.as_ref(),
-            min_floor,
+        let remote_kb = match tokio::time::timeout(
+            Duration::from_secs(4),
+            fetch_remote_keybox(
+                router.as_ref(),
+                self.crypto.as_ref(),
+                Some(vault_id),
+                pinned_owner.as_ref(),
+                min_floor,
+            ),
         )
         .await
         {
-            Ok(Some(kb)) => kb,
-            Ok(None) => return Ok(true),
-            Err(err @ ZeroVaultError::CryptoTamperDetected(_)) => return Err(err),
-            Err(err) => {
+            Ok(Ok(Some(kb))) => kb,
+            Ok(Ok(None)) => return Ok(true),
+            Ok(Err(err @ ZeroVaultError::CryptoTamperDetected(_))) => return Err(err),
+            Ok(Err(err)) => {
                 tracing::warn!(
                     code = error_code(&err),
                     error = %err,
                     "unable to probe remote keybox.zv during unlock"
                 );
+                return Ok(false);
+            }
+            Err(_) => {
+                tracing::warn!("timed out probing remote keybox.zv during unlock; continuing with local epoch floor");
                 return Ok(false);
             }
         };
@@ -1614,6 +1623,7 @@ impl DaemonRuntime {
             secret_account_key: secret_account_key.clone(),
         };
 
+        let new_entry = entry.clone();
         cfg.remotes.push(entry);
         let all_ids: Vec<String> = cfg.remotes.iter().map(|r| r.id.clone()).collect();
         let next_policy = compute_updated_routing_policy(
@@ -1626,9 +1636,21 @@ impl DaemonRuntime {
         cfg.routing_policy = Some(next_policy);
 
         // Validate construction before committing config to disk.
-        let build_res = self
-            .build_concrete_router(&cfg, self.crypto.is_unlocked())
-            .await;
+        let build_res: ZeroVaultResult<Option<Arc<StorageRouter>>> = if self.crypto.is_unlocked() {
+            self.build_concrete_router(&cfg, true).await
+        } else {
+            // When locked, validate ONLY the newly added remote so pre-existing remotes whose
+            // credentials are wrapped under the locked vault's TokenWrapKey do not abort setup.
+            self.build_single_backend(&new_entry, false)
+                .await
+                .and_then(|backend| {
+                    let single_policy = RoutingPolicy::Targeted {
+                        prefix_routes: Vec::new(),
+                        default_backend: id.clone(),
+                    };
+                    StorageRouter::new(vec![backend], single_policy).map(|r| Some(Arc::new(r)))
+                })
+        };
         let built_router = match build_res {
             Ok(r) => r,
             Err(err) => {
@@ -1821,6 +1843,11 @@ impl DaemonRuntime {
     }
 
     async fn oauth_login(&self, mut params: OAuthLoginParams) -> ZeroVaultResult<DaemonResponse> {
+        let _oauth_guard = self.oauth_exec_lock.try_lock().map_err(|_| {
+            ZeroVaultError::OAuthError(
+                "another OAuth sign-in is already in progress; finish or cancel it first".into(),
+            )
+        })?;
         let client_secret = params
             .client_secret
             .take()
@@ -2003,15 +2030,28 @@ impl DaemonRuntime {
             && let Some(backend) = router.backend(trimmed)
         {
             let health = backend.probe_health().await;
-            if health.healthy {
-                let _ = backend.sync_used_bytes().await;
-            }
             let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if health.healthy && backend.used_bytes() == 0 {
+                if matches!(
+                    backend.config().kind,
+                    BackendKind::LocalFs | BackendKind::Memory
+                ) {
+                    let _ = backend.sync_used_bytes().await;
+                } else {
+                    let bg_router = Arc::clone(&router);
+                    let bg_id = entry.id.clone();
+                    tokio::spawn(async move {
+                        if let Some(b) = bg_router.backend(&bg_id) {
+                            let _ = b.sync_used_bytes().await;
+                        }
+                    });
+                }
+            }
             let quota = backend.quota();
             let message = if health.healthy {
                 format!(
-                    "Connected to '{}' ({kind_label}) in {latency_ms} ms — {} B available",
-                    entry.id, quota.available_bytes
+                    "Connected to '{}' ({kind_label}) in {latency_ms} ms",
+                    entry.id
                 )
             } else {
                 health
@@ -2031,16 +2071,24 @@ impl DaemonRuntime {
         let unlocked = self.crypto.is_unlocked();
         match self.build_single_backend(&entry, unlocked).await {
             Ok(backend) => {
+                let probe_started = Instant::now();
                 let health = backend.probe_health().await;
-                if health.healthy {
+                let latency_ms =
+                    u64::try_from(probe_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                if health.healthy
+                    && backend.used_bytes() == 0
+                    && matches!(
+                        backend.config().kind,
+                        BackendKind::LocalFs | BackendKind::Memory
+                    )
+                {
                     let _ = backend.sync_used_bytes().await;
                 }
-                let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
                 let quota = backend.quota();
                 let message = if health.healthy {
                     format!(
-                        "Connected to '{}' ({kind_label}) in {latency_ms} ms — {} B available",
-                        entry.id, quota.available_bytes
+                        "Connected to '{}' ({kind_label}) in {latency_ms} ms",
+                        entry.id
                     )
                 } else {
                     health
@@ -2137,19 +2185,57 @@ impl DaemonRuntime {
         let built = self
             .build_concrete_router(cfg, self.crypto.is_unlocked())
             .await?;
+        let mut deferred_remote_sync = false;
         if sync_usage && let Some(ref router) = built {
             for backend in router.backends() {
-                if let Err(err) = backend.sync_used_bytes().await {
-                    tracing::warn!(
-                        remote_id = %backend.config().id,
-                        error = %err,
-                        "failed to reconcile remote quota usage on startup"
-                    );
+                match backend.config().kind {
+                    BackendKind::LocalFs | BackendKind::Memory => {
+                        if let Err(err) = backend.sync_used_bytes().await {
+                            tracing::warn!(
+                                remote_id = %backend.config().id,
+                                error = %err,
+                                "failed to reconcile local backend quota usage on startup"
+                            );
+                        }
+                    }
+                    _ => {
+                        deferred_remote_sync = true;
+                    }
                 }
             }
         }
+        let bg_router = if deferred_remote_sync {
+            built.clone()
+        } else {
+            None
+        };
         self.storage_router
             .set_router(built, cfg.routing_policy.clone());
+
+        // Reconcile cloud backend health and recursive quota usage asynchronously so unlocking
+        // a vault with thousands of Google Drive / S3 chunks never blocks the user.
+        if let Some(router) = bg_router {
+            tokio::spawn(async move {
+                for backend in router.backends() {
+                    if matches!(
+                        backend.config().kind,
+                        BackendKind::LocalFs | BackendKind::Memory
+                    ) {
+                        continue;
+                    }
+                    let health = backend.probe_health().await;
+                    if health.healthy
+                        && let Err(err) = backend.sync_used_bytes().await
+                    {
+                        tracing::warn!(
+                            remote_id = %backend.config().id,
+                            error = %err,
+                            "failed background remote quota usage reconciliation"
+                        );
+                    }
+                }
+            });
+        }
         Ok(())
     }
 
@@ -2180,6 +2266,49 @@ impl DaemonRuntime {
             let backend = self.build_single_backend(entry, include_crypto).await?;
             built.push(backend);
         }
+
+        let router = StorageRouter::new(built, policy)?;
+        Ok(Some(Arc::new(router)))
+    }
+
+    /// Builds a best-effort pre-unlock bootstrap router for fetching `vault/header.zvh`,
+    /// skipping any remotes whose credentials require an unlocked vault keyring.
+    async fn build_bootstrap_router(
+        &self,
+        cfg: &PersistedRemotesConfig,
+    ) -> ZeroVaultResult<Option<Arc<StorageRouter>>> {
+        if cfg.remotes.is_empty() {
+            return Ok(None);
+        }
+
+        let mut built = Vec::with_capacity(cfg.remotes.len());
+        for entry in &cfg.remotes {
+            match self.build_single_backend(entry, false).await {
+                Ok(backend) => built.push(backend),
+                Err(err) => {
+                    tracing::warn!(
+                        remote_id = %entry.id,
+                        kind = ?entry.kind,
+                        error = %err,
+                        "skipping remote during pre-unlock bootstrap (requires unlocked vault keyring)"
+                    );
+                }
+            }
+        }
+        if built.is_empty() {
+            return Ok(None);
+        }
+
+        let policy = if built.len() == 1 {
+            RoutingPolicy::Targeted {
+                prefix_routes: Vec::new(),
+                default_backend: built[0].config().id.clone(),
+            }
+        } else {
+            RoutingPolicy::QuotaPooled {
+                pool_backends: built.iter().map(|b| b.config().id.clone()).collect(),
+            }
+        };
 
         let router = StorageRouter::new(built, policy)?;
         Ok(Some(Arc::new(router)))
@@ -2496,9 +2625,9 @@ impl DaemonRuntime {
 
         let mut open_opts = OpenOptions::new();
         open_opts.read(true);
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         {
-            open_opts.custom_flags(0o400000); // O_NOFOLLOW on Linux
+            open_opts.custom_flags(libc::O_NOFOLLOW);
         }
         let mut src = open_opts.open(src_path).await?;
         let handle_meta = src.metadata().await?;
@@ -2913,10 +3042,47 @@ impl DaemonRuntime {
         format!("{}:wrapped", self.identity_secret_account())
     }
 
+    fn identity_wrap_key_account(&self) -> String {
+        format!("{}:wrap-key", self.identity_secret_account())
+    }
+
     async fn load_existing_recipient_identity(
         &self,
     ) -> ZeroVaultResult<Option<RecipientPrivateIdentity>> {
-        // 1. Try wrapped identity in SecretStore or `recipient_identity.zvi` when unlocked.
+        // 1. Primary path (B2): compact postcard+AEAD `recipient_identity.zvi` wrapped under a
+        //    32-byte key stored in OS keyring (well under Windows CredWriteW 2,560-byte cap).
+        if self.config.identity_state_path.exists() {
+            let raw_file = std::fs::read(&self.config.identity_state_path)?;
+            if raw_file.starts_with(IDENTITY_ZVI_MAGIC) {
+                let wrap_acct = self.identity_wrap_key_account();
+                if let Some(key_bytes) = self
+                    .secret_store
+                    .get_secret(&self.config.secret_service, &wrap_acct)
+                    .await?
+                    && key_bytes.len() == IDENTITY_WRAP_KEY_LEN
+                {
+                    let mut wrap_key = Zeroizing::new([0u8; IDENTITY_WRAP_KEY_LEN]);
+                    wrap_key.copy_from_slice(&key_bytes);
+                    let parsed = open_recipient_identity_zvi(&wrap_key, &raw_file)?;
+                    parsed.public.validate()?;
+                    return Ok(Some(parsed));
+                }
+            } else if self.crypto.is_unlocked()
+                && let Ok(unwrapped) = self.crypto.unwrap_token_payload(&raw_file)
+            {
+                // Backward-compatible fallback: legacy vault-wrapped JSON `recipient_identity.zvi`.
+                let parsed: RecipientPrivateIdentity = serde_json::from_slice(unwrapped.as_slice())
+                    .map_err(|e| {
+                        ZeroVaultError::InvalidWireFormat(format!(
+                            "corrupt wrapped recipient identity file: {e}"
+                        ))
+                    })?;
+                parsed.public.validate()?;
+                return Ok(Some(parsed));
+            }
+        }
+
+        // 2. Backward-compatible fallback: legacy wrapped identity entry in OS keyring.
         if self.crypto.is_unlocked() {
             let wrapped_acct = self.identity_wrapped_account();
             if let Some(wrapped) = self
@@ -2934,23 +3100,9 @@ impl DaemonRuntime {
                 parsed.public.validate()?;
                 return Ok(Some(parsed));
             }
-
-            if self.config.identity_state_path.exists() {
-                let raw_file = std::fs::read(&self.config.identity_state_path)?;
-                if let Ok(unwrapped) = self.crypto.unwrap_token_payload(&raw_file) {
-                    let parsed: RecipientPrivateIdentity =
-                        serde_json::from_slice(unwrapped.as_slice()).map_err(|e| {
-                            ZeroVaultError::InvalidWireFormat(format!(
-                                "corrupt wrapped recipient identity file: {e}"
-                            ))
-                        })?;
-                    parsed.public.validate()?;
-                    return Ok(Some(parsed));
-                }
-            }
         }
 
-        // 2. Fallback to OS keyring direct entry (enables pre-unlock identity & post-rotation unlock).
+        // 3. Backward-compatible fallback: legacy raw JSON entry in OS keyring.
         let raw_acct = self.identity_secret_account();
         if let Some(raw) = self
             .secret_store
@@ -2975,24 +3127,37 @@ impl DaemonRuntime {
         identity: &RecipientPrivateIdentity,
     ) -> ZeroVaultResult<()> {
         identity.public.validate()?;
-        let serialized = Zeroizing::new(serde_json::to_vec(identity).map_err(|e| {
-            ZeroVaultError::InvalidWireFormat(format!("failed serializing recipient identity: {e}"))
-        })?);
 
-        let raw_acct = self.identity_secret_account();
-        self.secret_store
-            .set_secret(&self.config.secret_service, &raw_acct, serialized.as_slice())
-            .await?;
-
-        if self.crypto.is_unlocked() {
-            let wrapped = self.crypto.wrap_token_payload(serialized.as_slice())?;
-            let wrapped_acct = self.identity_wrapped_account();
+        // Store ONLY a 32-byte wrapping key in the OS keyring (Windows CredWriteW caps at 2,560 bytes)
+        // and persist the compact postcard+AEAD identity blob in `recipient_identity.zvi`.
+        let wrap_acct = self.identity_wrap_key_account();
+        let wrap_key: Zeroizing<[u8; IDENTITY_WRAP_KEY_LEN]> = if let Some(existing_key) = self
+            .secret_store
+            .get_secret(&self.config.secret_service, &wrap_acct)
+            .await?
+            && existing_key.len() == IDENTITY_WRAP_KEY_LEN
+        {
+            let mut arr = Zeroizing::new([0u8; IDENTITY_WRAP_KEY_LEN]);
+            arr.copy_from_slice(&existing_key);
+            arr
+        } else {
+            use ring::rand::SecureRandom as _;
+            let mut arr = Zeroizing::new([0u8; IDENTITY_WRAP_KEY_LEN]);
+            ring::rand::SystemRandom::new()
+                .fill(arr.as_mut())
+                .map_err(|_| {
+                    ZeroVaultError::KeyringError(
+                        "CSPRNG failure generating recipient identity wrapping key".into(),
+                    )
+                })?;
             self.secret_store
-                .set_secret(&self.config.secret_service, &wrapped_acct, &wrapped)
+                .set_secret(&self.config.secret_service, &wrap_acct, arr.as_slice())
                 .await?;
-            write_atomic_private(&self.config.identity_state_path, &wrapped)?;
-        }
+            arr
+        };
 
+        let sealed = seal_recipient_identity_zvi(&wrap_key, identity)?;
+        write_atomic_private(&self.config.identity_state_path, &sealed)?;
         Ok(())
     }
 
@@ -4057,10 +4222,12 @@ impl DaemonRuntime {
         if paused {
             self.backup_cancel_flag.store(true, Ordering::Release);
         }
-        let mut state = self.backup_state.read().await.clone();
-        state.backups_paused = paused;
-        persist_backup_state(&self.config.backup_jobs_path, &state)?;
-        *self.backup_state.write().await = state;
+        let _guard = self.lifecycle_lock.lock().await;
+        {
+            let mut state = self.backup_state.write().await;
+            state.backups_paused = paused;
+            persist_backup_state(&self.config.backup_jobs_path, &state)?;
+        }
 
         let msg = if paused {
             "automatic backups paused"
@@ -4074,10 +4241,12 @@ impl DaemonRuntime {
 
     async fn cancel_active_backup(&self) -> ZeroVaultResult<DaemonResponse> {
         self.backup_cancel_flag.store(true, Ordering::Release);
-        let mut state = self.backup_state.read().await.clone();
-        state.backups_paused = true;
-        persist_backup_state(&self.config.backup_jobs_path, &state)?;
-        *self.backup_state.write().await = state;
+        let _guard = self.lifecycle_lock.lock().await;
+        {
+            let mut state = self.backup_state.write().await;
+            state.backups_paused = true;
+            persist_backup_state(&self.config.backup_jobs_path, &state)?;
+        }
 
         Ok(DaemonResponse::Ok {
             message: "active backup cancelled and automatic backups paused".to_owned(),
@@ -4099,7 +4268,25 @@ impl DaemonRuntime {
             .clone()
             .ok_or(ZeroVaultError::VaultLocked)?;
 
-        let _exec_guard = self.backup_exec_lock.lock().await;
+        let exec_guard = if preview {
+            None
+        } else {
+            match self.backup_exec_lock.try_lock() {
+                Ok(g) => Some(g),
+                Err(_) => {
+                    let act = self
+                        .active_activity
+                        .read()
+                        .clone()
+                        .unwrap_or_else(|| "Backing up folders…".to_owned());
+                    return Ok(DaemonResponse::Ok {
+                        message: format!(
+                            "Backup is already in progress ({act}). Watch live progress above or click Stop to cancel."
+                        ),
+                    });
+                }
+            }
+        };
         let job = {
             let state = self.backup_state.read().await;
             state
@@ -4113,6 +4300,7 @@ impl DaemonRuntime {
         };
 
         let report = Box::pin(self.execute_and_record_backup(&bundle, &job, preview)).await?;
+        drop(exec_guard);
         reclaim_process_memory().await;
         Ok(DaemonResponse::BackupReport(report))
     }
@@ -4125,7 +4313,25 @@ impl DaemonRuntime {
             .clone()
             .ok_or(ZeroVaultError::VaultLocked)?;
 
-        let _exec_guard = self.backup_exec_lock.lock().await;
+        let exec_guard = if preview {
+            None
+        } else {
+            match self.backup_exec_lock.try_lock() {
+                Ok(g) => Some(g),
+                Err(_) => {
+                    let act = self
+                        .active_activity
+                        .read()
+                        .clone()
+                        .unwrap_or_else(|| "Backing up folders…".to_owned());
+                    return Ok(DaemonResponse::Ok {
+                        message: format!(
+                            "Backup is already in progress ({act}). Watch live progress above or click Stop to cancel."
+                        ),
+                    });
+                }
+            }
+        };
         let enabled_jobs: Vec<StoredBackupJob> = {
             let state = self.backup_state.read().await;
             state.jobs.iter().filter(|j| j.enabled).cloned().collect()
@@ -4145,6 +4351,7 @@ impl DaemonRuntime {
             total_bytes = total_bytes.saturating_add(rep.bytes_uploaded);
         }
 
+        drop(exec_guard);
         reclaim_process_memory().await;
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let message = if preview {
@@ -4210,7 +4417,11 @@ impl DaemonRuntime {
         job: &StoredBackupJob,
         preview: bool,
     ) -> ZeroVaultResult<BackupRunReport> {
-        self.backup_cancel_flag.store(false, Ordering::Release);
+        let preview_cancel_flag = AtomicBool::new(false);
+        let preview_activity = SyncRwLock::new(None);
+        if !preview {
+            self.backup_cancel_flag.store(false, Ordering::Release);
+        }
         let mount_point = self.current_mount_point().await;
         let has_remotes = !self.remotes_config.read().await.remotes.is_empty();
 
@@ -4229,6 +4440,17 @@ impl DaemonRuntime {
             }
         }
 
+        let cancel_flag_ref = if preview {
+            &preview_cancel_flag
+        } else {
+            &self.backup_cancel_flag
+        };
+        let activity_ref = if preview {
+            &preview_activity
+        } else {
+            &self.active_activity
+        };
+
         let exec_res = Box::pin(execute_single_backup_job(
             bundle,
             job,
@@ -4237,13 +4459,15 @@ impl DaemonRuntime {
             &self.config.state_dir,
             &self.config.staging_dir,
             mount_point.as_deref(),
-            &self.backup_cancel_flag,
-            &self.active_activity,
+            cancel_flag_ref,
+            activity_ref,
         ))
         .await;
 
-        *self.active_backup_job_id.write() = None;
-        *self.active_activity.write() = None;
+        if !preview {
+            *self.active_backup_job_id.write() = None;
+            *self.active_activity.write() = None;
+        }
 
         match exec_res {
             Ok(report) => {
@@ -4261,7 +4485,10 @@ impl DaemonRuntime {
                 Ok(report)
             }
             Err(err) => {
-                if !preview && !is_backup_cancelled_error(&err) {
+                if !preview
+                    && !is_backup_cancelled_error(&err)
+                    && !matches!(err, ZeroVaultError::VaultLocked)
+                {
                     let mut state = self.backup_state.write().await;
                     if let Some(slot) = state.jobs.iter_mut().find(|j| j.id == job.id) {
                         slot.last_error = Some(err.to_string());
@@ -5349,6 +5576,76 @@ fn open_url_in_system_browser(raw_url: &str) -> ZeroVaultResult<()> {
     Ok(())
 }
 
+const IDENTITY_ZVI_MAGIC: &[u8; 4] = b"ZVI1";
+const IDENTITY_ZVI_AAD: &[u8] = b"entrocloud:recipient-identity:v1";
+const IDENTITY_ZVI_NONCE_LEN: usize = 12;
+const IDENTITY_WRAP_KEY_LEN: usize = 32;
+
+fn seal_recipient_identity_zvi(
+    key: &[u8; IDENTITY_WRAP_KEY_LEN],
+    identity: &RecipientPrivateIdentity,
+) -> ZeroVaultResult<Vec<u8>> {
+    use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
+    use ring::rand::{SecureRandom as _, SystemRandom};
+
+    let mut plaintext = Zeroizing::new(postcard::to_allocvec(identity).map_err(|e| {
+        ZeroVaultError::InvalidWireFormat(format!("failed serializing recipient identity: {e}"))
+    })?);
+    let mut nonce_bytes = [0u8; IDENTITY_ZVI_NONCE_LEN];
+    SystemRandom::new().fill(&mut nonce_bytes).map_err(|_| {
+        ZeroVaultError::KeyringError("CSPRNG failure generating identity nonce".into())
+    })?;
+
+    let unbound = UnboundKey::new(&AES_256_GCM, key)
+        .map_err(|_| ZeroVaultError::KeyringError("invalid identity wrap key".into()))?;
+    let aead_key = LessSafeKey::new(unbound);
+    let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+    aead_key
+        .seal_in_place_append_tag(nonce, Aad::from(IDENTITY_ZVI_AAD), &mut *plaintext)
+        .map_err(|_| {
+            ZeroVaultError::CryptoTamperDetected("failed sealing recipient identity".into())
+        })?;
+
+    let mut out =
+        Vec::with_capacity(IDENTITY_ZVI_MAGIC.len() + IDENTITY_ZVI_NONCE_LEN + plaintext.len());
+    out.extend_from_slice(IDENTITY_ZVI_MAGIC);
+    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(plaintext.as_slice());
+    Ok(out)
+}
+
+fn open_recipient_identity_zvi(
+    key: &[u8; IDENTITY_WRAP_KEY_LEN],
+    blob: &[u8],
+) -> ZeroVaultResult<RecipientPrivateIdentity> {
+    use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
+
+    let header_len = IDENTITY_ZVI_MAGIC.len() + IDENTITY_ZVI_NONCE_LEN;
+    if blob.len() < header_len + AES_256_GCM.tag_len() || !blob.starts_with(IDENTITY_ZVI_MAGIC) {
+        return Err(ZeroVaultError::InvalidWireFormat(
+            "invalid ZVI1 recipient identity envelope".into(),
+        ));
+    }
+    let mut nonce_bytes = [0u8; IDENTITY_ZVI_NONCE_LEN];
+    nonce_bytes.copy_from_slice(&blob[IDENTITY_ZVI_MAGIC.len()..header_len]);
+    let mut buf = Zeroizing::new(blob[header_len..].to_vec());
+
+    let unbound = UnboundKey::new(&AES_256_GCM, key)
+        .map_err(|_| ZeroVaultError::KeyringError("invalid identity wrap key".into()))?;
+    let aead_key = LessSafeKey::new(unbound);
+    let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+    let plaintext = aead_key
+        .open_in_place(nonce, Aad::from(IDENTITY_ZVI_AAD), buf.as_mut_slice())
+        .map_err(|_| {
+            ZeroVaultError::CryptoTamperDetected(
+                "recipient_identity.zvi AEAD authentication failed".into(),
+            )
+        })?;
+    postcard::from_bytes(plaintext).map_err(|e| {
+        ZeroVaultError::InvalidWireFormat(format!("corrupt ZVI1 recipient identity payload: {e}"))
+    })
+}
+
 fn write_atomic_private(path: &Path, data: &[u8]) -> ZeroVaultResult<()> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
@@ -5360,7 +5657,25 @@ fn write_atomic_private(path: &Path, data: &[u8]) -> ZeroVaultResult<()> {
         .and_then(|s| s.to_str())
         .unwrap_or("state");
     let tmp_path = path.with_file_name(format!(".{file_name}.{}.tmp", Uuid::new_v4().as_simple()));
-    std::fs::write(&tmp_path, data)?;
+    #[cfg(unix)]
+    {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp_path)?;
+        if let Err(err) = file.write_all(data).and_then(|()| file.sync_all()) {
+            drop(file);
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(err.into());
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&tmp_path, data)?;
+    }
     if let Err(err) = ensure_owner_only_file(&tmp_path) {
         let _ = std::fs::remove_file(&tmp_path);
         return Err(err);
@@ -5472,5 +5787,40 @@ fn error_to_daemon_response(err: &ZeroVaultError) -> DaemonResponse {
     DaemonResponse::Error {
         code: error_code(err).to_owned(),
         message: err.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod b2_identity_tests {
+    use super::*;
+    use entrocloud_types::mocks::MockCryptoEngine;
+
+    #[test]
+    fn zvi1_recipient_identity_roundtrip_and_tamper_rejection() -> ZeroVaultResult<()> {
+        let crypto = MockCryptoEngine::default();
+        let identity = crypto.generate_recipient_identity("alice")?;
+        let key = [0x42u8; IDENTITY_WRAP_KEY_LEN];
+
+        let sealed = seal_recipient_identity_zvi(&key, &identity)?;
+        assert!(sealed.starts_with(IDENTITY_ZVI_MAGIC));
+        const {
+            assert!(IDENTITY_WRAP_KEY_LEN <= 2560);
+        }
+
+        let opened = open_recipient_identity_zvi(&key, &sealed)?;
+        assert_eq!(opened.public, identity.public);
+        assert_eq!(*opened.ed25519_seed, *identity.ed25519_seed);
+        assert_eq!(*opened.x25519_private, *identity.x25519_private);
+        assert_eq!(*opened.mlkem768_decaps_key, *identity.mlkem768_decaps_key);
+
+        let mut tampered = sealed.clone();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 0x01;
+        assert!(matches!(
+            open_recipient_identity_zvi(&key, &tampered),
+            Err(ZeroVaultError::CryptoTamperDetected(_))
+        ));
+
+        Ok(())
     }
 }

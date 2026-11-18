@@ -44,6 +44,7 @@ windows-sys = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 eframe = { version = "0.29.1", default-features = false, features = ["glow", "default_fonts", "accesskit", "wayland", "x11"] }
+tray-icon = { workspace = true, features = ["ksni"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

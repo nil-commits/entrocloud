@@ -110,14 +110,14 @@ async fn async_main(args: DaemonArgs) -> anyhow::Result<()> {
     );
 
     let shutdown_runtime = Arc::clone(&runtime);
-    let ctrl_c_shutdown = Box::pin(async move {
-        if let Err(err) = tokio::signal::ctrl_c().await {
-            tracing::warn!(error = %err, "failed awaiting ctrl-c signal");
-            return;
-        }
-        tracing::info!("received Ctrl-C, locking vault and unmounting virtual drive");
+    let signal_shutdown = Box::pin(async move {
+        let signal_name = wait_for_shutdown_signal().await;
+        tracing::info!(
+            signal = signal_name,
+            "received shutdown signal, locking vault and unmounting virtual drive"
+        );
         if let Err(err) = shutdown_runtime.graceful_shutdown().await {
-            tracing::warn!(error = %err, "error during Ctrl-C graceful shutdown");
+            tracing::warn!(error = %err, "error during graceful shutdown");
         }
     });
 
@@ -128,7 +128,7 @@ async fn async_main(args: DaemonArgs) -> anyhow::Result<()> {
                 let rt = Arc::clone(&dispatch_runtime);
                 Box::pin(async move { rt.handle_request(req).await })
             },
-            ctrl_c_shutdown,
+            signal_shutdown,
         )
         .await;
 
@@ -140,6 +140,42 @@ async fn async_main(args: DaemonArgs) -> anyhow::Result<()> {
     serve_res.context("IPC server exited with error")?;
     tracing::info!("entrocloudd exited cleanly");
     Ok(())
+}
+
+async fn wait_for_shutdown_signal() -> &'static str {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        match signal(SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                tokio::select! {
+                    res = tokio::signal::ctrl_c() => {
+                        if let Err(err) = res {
+                            tracing::warn!(error = %err, "failed awaiting ctrl-c signal");
+                        }
+                        "SIGINT"
+                    }
+                    _ = sigterm.recv() => "SIGTERM",
+                }
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "failed registering SIGTERM handler; falling back to Ctrl-C only");
+                if let Err(ctrl_err) = tokio::signal::ctrl_c().await {
+                    tracing::warn!(error = %ctrl_err, "failed awaiting ctrl-c signal");
+                }
+                "SIGINT"
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            tracing::warn!(error = %err, "failed awaiting ctrl-c signal");
+        }
+        "Ctrl-C"
+    }
 }
 
 #[cfg(test)]

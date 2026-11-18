@@ -69,7 +69,7 @@ mod unit_tests {
             return Err(format!("unexpected xdg socket path: {}", xdg_sock.display()));
         }
         let fallback_sock = default_unix_socket_path_for_uid(None, 1000);
-        if fallback_sock != Path::new("/run/user/1000/entrocloud/entrocloudd.sock") {
+        if fallback_sock != Path::new("/tmp/entrocloud-1000").join("entrocloudd.sock") {
             return Err(format!(
                 "unexpected fallback socket path: {}",
                 fallback_sock.display()

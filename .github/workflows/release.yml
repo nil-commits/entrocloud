@@ -1,0 +1,180 @@
+name: Release (Windows & Arch Linux)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (e.g. v1.0.1)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows x86_64
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build & verify portable Windows bundle
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\packaging\windows\bundle-portable.ps1
+
+      - name: Prepare Windows release assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          Copy-Item dist\windows\entrocloud-windows-x86_64-portable.zip release-assets\
+          Copy-Item dist\windows\entrocloud-portable\EntroCloud.exe release-assets\
+          Copy-Item dist\windows\entrocloud-portable\SHA256SUMS.txt release-assets\SHA256SUMS-windows.txt
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: release-assets/*
+
+  build-arch:
+    name: Build Arch Linux x86_64
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install Arch Linux build & runtime dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git \
+            rust \
+            cmake \
+            pkgconf \
+            dbus \
+            fuse3 \
+            libglvnd \
+            libxkbcommon \
+            wayland \
+            libx11 \
+            tar \
+            zstd
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Arch Linux package (.pkg.tar.zst) and portable tarball
+        run: |
+          set -euo pipefail
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+          su - builder -c "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg -f --noconfirm --nodeps"
+
+          mkdir -p "$GITHUB_WORKSPACE/release-assets"
+          cp "$GITHUB_WORKSPACE"/packaging/arch/entrocloud-*.pkg.tar.zst "$GITHUB_WORKSPACE/release-assets/"
+
+          # Also create a standalone Arch Linux portable tarball with all binaries, systemd units, desktop file, and docs
+          STAGE="$GITHUB_WORKSPACE/dist/arch-portable"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/bin" "$STAGE/systemd" "$STAGE/desktop"
+          cp "$GITHUB_WORKSPACE/target/release/entrocloud" "$STAGE/bin/"
+          cp "$GITHUB_WORKSPACE/target/release/entrocloudd" "$STAGE/bin/"
+          cp "$GITHUB_WORKSPACE/target/release/ec" "$STAGE/bin/"
+          cp "$GITHUB_WORKSPACE/target/release/entrocloud-tray" "$STAGE/bin/"
+          cp "$GITHUB_WORKSPACE/packaging/arch/entrocloudd.service" "$STAGE/systemd/"
+          cp "$GITHUB_WORKSPACE/packaging/arch/entrocloud-tray.service" "$STAGE/systemd/"
+          cp "$GITHUB_WORKSPACE/packaging/arch/entrocloud.desktop" "$STAGE/desktop/"
+          cp "$GITHUB_WORKSPACE/packaging/arch/entrocloud.svg" "$STAGE/desktop/"
+          cp "$GITHUB_WORKSPACE/packaging/arch/PKGBUILD" "$STAGE/"
+          cp "$GITHUB_WORKSPACE/GOOGLE-DRIVE-SETUP.md" "$STAGE/"
+          cp "$GITHUB_WORKSPACE/README.md" "$STAGE/"
+
+          tar -C "$STAGE" -czf "$GITHUB_WORKSPACE/release-assets/entrocloud-archlinux-x86_64-portable.tar.gz" .
+          (cd "$GITHUB_WORKSPACE/release-assets" && sha256sum entrocloud-*.pkg.tar.zst entrocloud-archlinux-x86_64-portable.tar.gz > SHA256SUMS-archlinux.txt)
+          ls -lh "$GITHUB_WORKSPACE/release-assets"
+
+      - name: Upload Arch Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-release
+          path: release-assets/*
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-arch]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: release-assets
+
+      - name: Download Arch Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: arch-release
+          path: release-assets
+
+      - name: Generate combined SHA256SUMS.txt
+        run: |
+          cd release-assets
+          sha256sum \
+            EntroCloud.exe \
+            entrocloud-windows-x86_64-portable.zip \
+            entrocloud-*.pkg.tar.zst \
+            entrocloud-archlinux-x86_64-portable.tar.gz \
+            > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Determine release tag
+        id: meta
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          elif [[ -n "${{ inputs.tag }}" ]]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="v1.0.1"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          cat > release-notes.md <<'EOF'
+          ## EntroCloud — Windows & Arch Linux Release
+
+          ### Downloads
+          - **Windows (x86_64):**
+            - `entrocloud-windows-x86_64-portable.zip` — Full portable bundle (`EntroCloud.exe`, `entrocloudd.exe`, `ec.exe`, `entrocloud-tray.exe`, installer & URI scripts, 0 WebView2 DLLs)
+            - `EntroCloud.exe` — Standalone native GPU desktop GUI
+          - **Arch Linux (x86_64):**
+            - `entrocloud-*.pkg.tar.zst` — Native Arch Linux package (`sudo pacman -U entrocloud-*.pkg.tar.zst`)
+            - `entrocloud-archlinux-x86_64-portable.tar.gz` — Portable Linux tarball (`entrocloud`, `entrocloudd`, `ec`, `entrocloud-tray`, systemd user units, `.desktop` file, `PKGBUILD`)
+          - **Checksums:** `SHA256SUMS.txt`
+
+          ### Highlights in this Release
+          - **GUI Polish & Apple-Style Refinement:** Floating macOS-style scrollbars, 120 ms hover/press animations, subtle card elevation shadows, calm single-hairline top bar with neutral `Lock` button, borderless context menus, segmented controls (`Light / Dark / System`, `Grid / List`, benchmark sizes), floating non-jumping toast notifications, Finder-style right-aligned monospace file sizes & search box, and clean typography.
+          - **GUI Bug Fixes:** Private Note Editor loading state, dirty-discard confirmation, and path validation; vault-lock secret zeroization & modal cleanup; single-instance tray window focus & non-blocking tray IPC; A→Z default sort; Sharing revoke confirmation & URI validation; Wizard & Dialog edge-case fixes.
+          - **Backend & Storage Reliability:** Preserved AEAD-encrypted dirty staging chunks across Lock/Shutdown; compact `ZVI1` recipient identity storage with 32-byte keyring wrap (fixing Windows Credential Manager's 2,560-byte limit); Google Drive & Dropbox OAuth2 offline refresh token parameters; 4 MiB IPC frame limit; locked-mode remote validation; backup preview/cancel isolation.
+          - **Arch Linux & Unix Parity:** Enabled pure-Rust `ksni` StatusNotifierItem tray on Linux, Linux single-instance window focus, Apple-feel Linux font discovery (`Inter`/`Cantarell`/`JetBrains Mono`), `SIGTERM` graceful daemon shutdown, `libc::O_NOFOLLOW` (`aarch64`-safe), `0o600` atomic private writes, FUSE3 stale-mount recovery, and updated `PKGBUILD` & systemd user units.
+          EOF
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber
+            gh release edit "$TAG" --notes-file release-notes.md
+          else
+            gh release create "$TAG" release-assets/* \
+              --title "EntroCloud ${TAG} — Windows & Arch Linux" \
+              --notes-file release-notes.md
+          fi

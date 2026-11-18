@@ -30,7 +30,10 @@ pub mod worker;
 
 pub use app::{ColdBenchConfig, EntroCloudApp, StudioTab, ZeroVaultApp};
 pub use cli::UiCliArgs;
-pub use demo::{ScreenshotTourDriver, TOUR_STEPS, populate_demo_worker_state, write_color_image_png};
+pub use demo::{
+    MODAL_TOUR_STEPS, ScreenshotTourDriver, TOUR_STEPS, populate_demo_worker_state,
+    write_color_image_png,
+};
 pub use dialogs::{AsyncDialogs, DialogOutcome, DialogPurpose};
 pub use icons::{Icon, paint_brand_mark, paint_icon};
 pub use ipc_client::{
@@ -54,7 +57,7 @@ pub use session::{
 };
 pub use theme::{
     Palette, PillTone, SEMIBOLD_FAMILY_NAME, ThemePreference, UiPrefs, apply_palette,
-    install_os_fonts, set_os_autostart_enabled,
+    escape_desktop_exec_arg, install_os_fonts, set_os_autostart_enabled,
 };
 pub use tray_common::{
     format_bytes_human, format_bytes_iec, format_rate_iec, generate_entrocloud_rgba_icon,

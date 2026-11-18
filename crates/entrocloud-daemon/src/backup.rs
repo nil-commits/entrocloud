@@ -22,13 +22,20 @@ use entrocloud_types::{
 use crate::dacl::{ensure_owner_only_dir, ensure_owner_only_file, is_symlink_or_reparse};
 use crate::service::{SyncBackendBundle, normalize_vault_virtual_path};
 
-/// Default exclusion patterns matching common OS temporary and metadata files.
+/// Default exclusion patterns matching common OS temporary, cache, and build directories.
 pub const DEFAULT_BACKUP_EXCLUDES: &[&str] = &[
     "desktop.ini",
     "Thumbs.db",
     "~$*",
     "*.tmp",
     ".DS_Store",
+    "node_modules",
+    ".git",
+    "target",
+    ".venv",
+    "__pycache__",
+    ".next",
+    ".cache",
 ];
 
 /// Maximum supported automatic backup cadence in minutes (7 days = `10,080` minutes).
@@ -198,7 +205,25 @@ pub fn persist_backup_state(path: &Path, state: &PersistedBackupState) -> ZeroVa
         .and_then(|s| s.to_str())
         .unwrap_or("backup_jobs.json");
     let tmp_path = path.with_file_name(format!(".{file_name}.{}.tmp", Uuid::new_v4().as_simple()));
-    std::fs::write(&tmp_path, &json)?;
+    #[cfg(unix)]
+    {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp_path)?;
+        if let Err(err) = file.write_all(&json).and_then(|()| file.sync_all()) {
+            drop(file);
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(err.into());
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&tmp_path, &json)?;
+    }
     if let Err(err) = ensure_owner_only_file(&tmp_path) {
         let _ = std::fs::remove_file(&tmp_path);
         return Err(err);
@@ -946,9 +971,9 @@ pub async fn execute_single_backup_job(
 
             let mut open_opts = OpenOptions::new();
             open_opts.read(true);
-            #[cfg(target_os = "linux")]
+            #[cfg(unix)]
             {
-                open_opts.custom_flags(0o400000); // O_NOFOLLOW
+                open_opts.custom_flags(libc::O_NOFOLLOW);
             }
             let mut src = open_opts.open(&pending.local_path).await?;
             let handle_meta = src.metadata().await?;
@@ -1078,9 +1103,17 @@ pub async fn execute_single_backup_job(
     }
 
     if has_remotes {
-        *active_activity.write() = Some(format!("Syncing {} to cloud\u{2026}", job.name));
+        let job_name = job.name.clone();
+        *active_activity.write() = Some(format!("Syncing {job_name} to cloud\u{2026}"));
         if let Some(ref engine) = bundle.sync_engine {
-            let _ = engine.sync_once().await?;
+            let progress_cb = |done: usize, total: usize| {
+                *active_activity.write() = Some(format!(
+                    "Uploading {job_name} to cloud ({done}/{total} files)\u{2026}"
+                ));
+            };
+            let _ = engine
+                .sync_once_with_options(Some(cancel_flag), Some(&progress_cb))
+                .await?;
         } else if let Some(ref runner) = bundle.sync_runner {
             runner.sync_now().await?;
         }

@@ -1,19 +1,19 @@
 # Maintainer: cloud.entropy.rs <ops@cloud.entropy.rs>
 pkgname=entrocloud
-pkgver=1.0.0
+pkgver=1.0.1
 pkgrel=1
 pkgdesc="Zero-knowledge multi-cloud encrypted virtual filesystem and automatic folder backup suite (daemon, CLI, pure-Rust GPU UI, and tray helper)"
 arch=('x86_64' 'aarch64')
 url="https://cloud.entropy.rs/entrocloud"
 license=('MIT' 'Apache-2.0')
 depends=(
+  'dbus'
   'fuse3'
   'gcc-libs'
   'glibc'
-  'libsecret'
   'libglvnd'
-  'wayland'
   'libxkbcommon'
+  'wayland'
 )
 makedepends=(
   'cargo'
@@ -21,7 +21,10 @@ makedepends=(
 )
 optdepends=(
   'attr: getfattr and setfattr utilities for FUSE3 extended attribute pinning'
+  'gnome-keyring: persistent Secret Service credential storage (or kwallet)'
+  'libx11: X11 display backend support for the desktop UI'
   'xdg-desktop-portal: native desktop file and folder picker dialogs'
+  'xdg-utils: open OAuth2 sign-in URLs in the default desktop browser'
 )
 source=(
   'entrocloudd.service'

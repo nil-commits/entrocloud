@@ -74,7 +74,7 @@ pub fn paint_brand_mark(painter: &egui::Painter, rect: Rect) {
 pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
     let side = rect.width().min(rect.height()).max(4.0);
     let box_rect = Rect::from_center_size(rect.center(), Vec2::splat(side));
-    let sw = (side * 0.095).clamp(1.35, 2.25);
+    let sw = (side * 0.095).clamp(1.15, 2.25);
     let stroke = Stroke::new(sw, color);
 
     // Maps normalized 24x24 icon coordinates into `box_rect`.
@@ -287,14 +287,18 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
             painter.circle_filled(pt(12.0, 17.1), sc(1.05), color);
         }
         Icon::Refresh => {
-            let arc1 = arc_points(pt(12.0, 12.0), sc(7.2), -PI * 0.82, PI * 0.05, 14);
+            let c = pt(12.0, 12.0);
+            let r = sc(7.2);
+            let a1_end = -PI * 0.06;
+            let arc1 = arc_points(c, r, -PI * 0.84, a1_end, 14);
             painter.add(Shape::Path(PathShape::line(arc1, stroke)));
-            let head1 = vec![pt(16.4, 7.8), pt(19.4, 11.4), pt(15.2, 12.2)];
+            let head1 = vec![pt(16.2, 7.3), pt(19.1, 10.7), pt(15.0, 11.5)];
             painter.add(Shape::Path(PathShape::line(head1, stroke)));
 
-            let arc2 = arc_points(pt(12.0, 12.0), sc(7.2), PI * 0.18, PI * 1.05, 14);
+            let a2_end = PI * 0.94;
+            let arc2 = arc_points(c, r, PI * 0.16, a2_end, 14);
             painter.add(Shape::Path(PathShape::line(arc2, stroke)));
-            let head2 = vec![pt(7.6, 16.2), pt(4.6, 12.6), pt(8.8, 11.8)];
+            let head2 = vec![pt(7.8, 16.7), pt(4.9, 13.3), pt(9.0, 12.5)];
             painter.add(Shape::Path(PathShape::line(head2, stroke)));
         }
         Icon::ExternalLink => {
@@ -354,20 +358,49 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
             painter.rect_filled(r, Rounding::same(sc(1.8)), color);
         }
         Icon::Sun => {
-            painter.circle_stroke(pt(12.0, 12.0), sc(4.2), stroke);
+            painter.circle_filled(pt(12.0, 12.0), sc(4.0), color);
             for i in 0..8 {
                 let ang = (i as f32) * (TAU / 8.0);
                 let c = pt(12.0, 12.0);
-                let p0 = Pos2::new(c.x + ang.cos() * sc(6.5), c.y + ang.sin() * sc(6.5));
-                let p1 = Pos2::new(c.x + ang.cos() * sc(9.2), c.y + ang.sin() * sc(9.2));
+                let p0 = Pos2::new(c.x + ang.cos() * sc(6.6), c.y + ang.sin() * sc(6.6));
+                let p1 = Pos2::new(c.x + ang.cos() * sc(9.6), c.y + ang.sin() * sc(9.6));
                 painter.line_segment([p0, p1], stroke);
             }
         }
         Icon::Moon => {
-            let outer = arc_points(pt(12.5, 12.0), sc(7.2), PI * 0.32, PI * 1.68, 16);
-            let inner = arc_points(pt(15.6, 9.6), sc(5.8), PI * 1.48, PI * 0.56, 14);
-            let mut crescent = outer;
-            crescent.extend(inner.into_iter().rev());
+            // Exact analytical intersection of outer circle (11.4, 12.0, r=7.0)
+            // and inner cutout circle (15.2, 9.4, r=5.9) so both cusps meet with 0 gap.
+            let (c1x, c1y, r1) = (11.4_f32, 12.0_f32, 7.0_f32);
+            let (c2x, c2y, r2) = (15.2_f32, 9.4_f32, 5.9_f32);
+            let dx = c2x - c1x;
+            let dy = c2y - c1y;
+            let d = dx.hypot(dy);
+            let a = (r1 * r1 - r2 * r2 + d * d) / (2.0 * d);
+            let h = (r1 * r1 - a * a).max(0.0).sqrt();
+            let mx = c1x + (a / d) * dx;
+            let my = c1y + (a / d) * dy;
+            let px = -dy / d;
+            let py = dx / d;
+            let top = (mx - h * px, my - h * py);
+            let bot = (mx + h * px, my + h * py);
+
+            let t1_top = (top.1 - c1y).atan2(top.0 - c1x);
+            let mut t1_bot = (bot.1 - c1y).atan2(bot.0 - c1x);
+            while t1_bot > t1_top {
+                t1_bot -= TAU;
+            }
+            let t2_bot = (bot.1 - c2y).atan2(bot.0 - c2x);
+            let mut t2_top = (top.1 - c2y).atan2(top.0 - c2x);
+            while t2_top < t2_bot {
+                t2_top += TAU;
+            }
+
+            let mut crescent = arc_points(pt(c1x, c1y), sc(r1), t1_top, t1_bot, 18);
+            let inner = arc_points(pt(c2x, c2y), sc(r2), t2_bot, t2_top, 14);
+            crescent.extend(inner.into_iter().skip(1));
+            if crescent.len() > 2 {
+                crescent.pop();
+            }
             painter.add(Shape::Path(PathShape::closed_line(crescent, stroke)));
         }
         Icon::Eye => {

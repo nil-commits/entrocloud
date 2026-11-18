@@ -183,6 +183,11 @@ fn ipc_endpoint_defaults_to_entrocloudd_and_rejects_lan_tcp() -> Result<()> {
         bail!("unexpected fallback socket path: {}", fallback_sock.display());
     }
 
+    let escaped = entrocloud_ui::escape_desktop_exec_arg(r#"/opt/Entro "Cloud"/100% $HOME\bin/entrocloud-tray"#);
+    if escaped != r#"/opt/Entro \"Cloud\"/100%% \$HOME\\bin/entrocloud-tray"# {
+        bail!("unexpected XDG desktop Exec escaping: {escaped}");
+    }
+
     Ok(())
 }
 
@@ -1086,6 +1091,242 @@ fn bench_cold_and_bench_tray_executables_render_and_verify_zero_webview2() -> Re
         }
     }
 
+    Ok(())
+}
+
+#[test]
+fn all_nine_modals_stay_centered_and_width_bounded_across_frames_and_dpi() -> Result<()> {
+    use eframe::egui;
+
+    let temp = tempfile::tempdir()?;
+    let ep = IpcEndpoint::parse("tcp://127.0.0.1:59998")?;
+    let client = IpcClient::new(ep);
+
+    for ( logical_w, logical_h, ppp ) in [
+        (920.0_f32, 640.0_f32, 1.0_f32),
+        (1180.0_f32, 780.0_f32, 1.0_f32),
+        (1280.0_f32, 820.0_f32, 1.25_f32),
+    ] {
+        for modal_idx in 0..9usize {
+            let worker = UiWorkerHandle::spawn(
+                client.clone(),
+                temp.path().join(format!("m_{modal_idx}_{}", logical_w as u32)),
+                Some(sample_unlocked_status()),
+                true,
+                false,
+                false,
+            );
+            let bench_slot = Arc::new(Mutex::new(None));
+            let mut app = EntroCloudApp::new(None, worker, None, None, bench_slot);
+
+            let ctx = egui::Context::default();
+            install_os_fonts(&ctx);
+            ctx.set_pixels_per_point(ppp);
+
+            let id_salt = match modal_idx {
+                0 => {
+                    app.set_active_tab(NavPage::Backups);
+                    app.open_backup_job_modal();
+                    "ec_backup_job_modal"
+                }
+                1 => {
+                    app.set_active_tab(NavPage::Backups);
+                    app.open_restore_modal("job-1", "Documents", r"C:\Users\Alex\Desktop");
+                    "ec_restore_backup_modal"
+                }
+                2 => {
+                    app.set_active_tab(NavPage::Backups);
+                    app.open_remove_job_modal("job-1", "Documents");
+                    "ec_remove_backup_modal"
+                }
+                3 => {
+                    app.set_active_tab(NavPage::CloudConnections);
+                    app.open_disconnect_cloud_modal("GoogleDrive");
+                    "ec_disconnect_cloud_modal"
+                }
+                4 => {
+                    app.set_active_tab(NavPage::MyFiles);
+                    app.open_note_modal("/Documents/Notes.md", "Secret test body\nLine 2");
+                    "ec_private_note_modal"
+                }
+                5 => {
+                    app.set_active_tab(NavPage::MyFiles);
+                    app.open_new_folder_modal("Receipts 2026");
+                    "ec_new_folder_modal"
+                }
+                6 => {
+                    app.set_active_tab(NavPage::MyFiles);
+                    app.open_rename_modal("/Documents/Passport Scan.pdf", "Passport Scan.pdf");
+                    "ec_rename_item_modal"
+                }
+                7 => {
+                    app.set_active_tab(NavPage::MyFiles);
+                    app.open_delete_modal("/Documents/Receipts 2026", true);
+                    "ec_delete_entry_modal"
+                }
+                _ => {
+                    app.set_active_tab(NavPage::Sharing);
+                    let uri = build_valid_test_ec_uri()?;
+                    app.open_share_import_modal(&uri, "/Shared/received_doc.pdf");
+                    "ec_share_import_modal"
+                }
+            };
+
+            let mut frame2_rect: Option<egui::Rect> = None;
+            let mut frame6_rect: Option<egui::Rect> = None;
+
+            for frame_no in 1..=6 {
+                let mut raw = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::Vec2::new(logical_w, logical_h),
+                    )),
+                    ..Default::default()
+                };
+                raw.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point =
+                    Some(ppp);
+
+                let _ = ctx.run(raw, |ctx| {
+                    app.render_headless_frame(ctx);
+                });
+
+                let rect = ctx.memory(|m| m.area_rect(egui::Id::new(id_salt)));
+                if frame_no == 2 {
+                    frame2_rect = rect;
+                }
+                if frame_no == 6 {
+                    frame6_rect = rect;
+                }
+            }
+
+            let r2 = frame2_rect.with_context(|| format!("missing frame 2 rect for {id_salt}"))?;
+            let r6 = frame6_rect.with_context(|| format!("missing frame 6 rect for {id_salt}"))?;
+
+            if r6.left() < 15.0 || r6.right() > logical_w - 15.0 {
+                bail!(
+                    "modal {id_salt} overflowed horizontally on {logical_w}x{logical_h}@{ppp}: rect={r6:?}"
+                );
+            }
+            if r6.top() < 15.0 || r6.bottom() > logical_h - 15.0 {
+                bail!(
+                    "modal {id_salt} overflowed vertically on {logical_w}x{logical_h}@{ppp}: rect={r6:?}"
+                );
+            }
+            if r6.width() > 660.0 {
+                bail!(
+                    "modal {id_salt} blew out past max card width (660px): width={} rect={r6:?}",
+                    r6.width()
+                );
+            }
+            let center_err = (r6.center().x - logical_w * 0.5).abs();
+            if center_err > 1.5 {
+                bail!(
+                    "modal {id_salt} is not horizontally centered on {logical_w}px: center_x={} err={center_err}",
+                    r6.center().x
+                );
+            }
+            let drift = (r6.width() - r2.width()).abs();
+            if drift > 0.5 {
+                bail!(
+                    "modal {id_salt} inflated across frames! frame2_w={} frame6_w={} drift={drift}",
+                    r2.width(),
+                    r6.width()
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn concurrent_backup_never_blocks_test_connection_or_status_polling() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let server = MockDaemonServer::spawn_tcp(|req| match req {
+        DaemonRequest::Ping => DaemonResponse::Ok {
+            message: "pong".to_owned(),
+        },
+        DaemonRequest::Status => {
+            let mut st = sample_unlocked_status();
+            st.active_activity = Some("Uploading constelia to cloud (128/640 files)…".to_owned());
+            DaemonResponse::Status(Box::new(st))
+        }
+        DaemonRequest::RunBackupJob { id, preview } => {
+            std::thread::sleep(Duration::from_millis(650));
+            DaemonResponse::BackupReport(BackupRunReport {
+                job_id: id,
+                preview,
+                files_scanned: 640,
+                files_uploaded: 12,
+                files_unchanged: 628,
+                bytes_uploaded: 1024 * 512,
+                elapsed_ms: 650,
+                message: "Backup complete".to_owned(),
+            })
+        }
+        DaemonRequest::TestRemote { id } => DaemonResponse::RemoteTest(RemoteTestReport {
+            id: id.clone(),
+            kind: "gdrive".to_owned(),
+            healthy: true,
+            latency_ms: 29,
+            quota: BackendQuota {
+                backend_id: id,
+                total_bytes: 100 * 1024 * 1024 * 1024,
+                used_bytes: 1024 * 1024,
+                available_bytes: 100 * 1024 * 1024 * 1024 - 1024 * 1024,
+            },
+            message: "Connected in 29 ms".to_owned(),
+        }),
+        DaemonRequest::ListDirectory { virtual_path } => DaemonResponse::DirectoryEntries {
+            virtual_path,
+            entries: Vec::new(),
+        },
+        _ => DaemonResponse::Ok {
+            message: "ok".to_owned(),
+        },
+    })?;
+
+    let client = IpcClient::new(server.endpoint().clone());
+    let mut worker = UiWorkerHandle::spawn(
+        client,
+        temp.path().join("concurrent_session"),
+        Some(sample_unlocked_status()),
+        true,
+        false,
+        true,
+    );
+
+    // 1. Trigger a long-running backup (`650 ms`).
+    worker.send(UiCommand::RunBackupJob {
+        id: "job-1".to_owned(),
+        preview: false,
+    });
+    std::thread::sleep(Duration::from_millis(40));
+
+    // 2. Immediately click `Test Connection` while `RunBackupJob` is still in flight!
+    let t0 = Instant::now();
+    worker.send(UiCommand::TestRemote {
+        id: "GoogleDrive".to_owned(),
+    });
+
+    let deadline = Instant::now() + Duration::from_millis(350);
+    let mut got_remote_test = false;
+    while Instant::now() < deadline {
+        if worker.state.lock().remote_tests.contains_key("GoogleDrive") {
+            got_remote_test = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(15));
+    }
+
+    let elapsed = t0.elapsed();
+    if !got_remote_test {
+        bail!(
+            "TestRemote was head-of-line blocked behind RunBackupJob! Elapsed={elapsed:?} (>350ms)"
+        );
+    }
+
+    worker.shutdown_and_scrub();
     Ok(())
 }
 

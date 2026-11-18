@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use eframe::egui::{
     self, Align2, Color32, CursorIcon, FontId, Margin, Pos2, Rect, RichText, Rounding, Sense,
@@ -15,7 +16,10 @@ use entrocloud_types::CapabilityUri;
 use parking_lot::Mutex;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::demo::{ScreenshotTourDriver, TOUR_STEPS, configure_tour_step_ui, write_color_image_png};
+use crate::demo::{
+    MODAL_TOUR_STEPS, ScreenshotTourDriver, TOUR_STEPS, configure_tour_step_ui,
+    populate_demo_worker_state, write_color_image_png,
+};
 use crate::dialogs::{AsyncDialogs, DialogOutcome, DialogPurpose};
 use crate::icons::{Icon, paint_brand_mark, paint_icon};
 use crate::metrics::{
@@ -23,9 +27,9 @@ use crate::metrics::{
     sample_current_process_memory,
 };
 use crate::theme::{
-    Palette, PillTone, ThemePreference, UiPrefs, apply_palette, danger_button, form_label,
-    install_os_fonts, primary_button, secondary_button, semibold_font, sidebar_action_button,
-    sidebar_nav_item, status_pill,
+    Palette, PillTone, ThemePreference, UiPrefs, apply_palette, form_label, icon_button,
+    input_row_with_right_widget, install_os_fonts, modal_dialog, primary_button, secondary_button,
+    semibold_font, sidebar_action_button, sidebar_nav_item, status_pill, text_input_single,
 };
 use crate::tray_common::format_bytes_human;
 use crate::views::backups::{BackupJobModalState, RestoreModalState, render_backups_view};
@@ -76,11 +80,13 @@ pub struct EntroCloudApp {
     auto_wizard_evaluated: bool,
 
     // Unlock / passphrase buffers (zeroized immediately on submit & exit)
+    was_unlocked: bool,
     init_new_vault_mode: bool,
     passphrase_input: Zeroizing<String>,
     confirm_passphrase_input: Zeroizing<String>,
     show_unlock_pass: bool,
     unlock_error: Option<String>,
+    unlock_autofocused: bool,
 
     // Per-view interactive state
     selected_backup_job_id: Option<String>,
@@ -94,6 +100,7 @@ pub struct EntroCloudApp {
     share_import_modal: ShareImportModalState,
 
     mount_point_input: String,
+    last_daemon_mount_point: Option<String>,
     use_portable_sandbox: bool,
     bench_payload_mib: usize,
 }
@@ -147,6 +154,13 @@ impl EntroCloudApp {
             active_page = NavPage::Sharing;
         }
 
+        let initially_unlocked = worker
+            .state
+            .lock()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.unlocked);
+
         Self {
             worker,
             dialogs: AsyncDialogs::new(),
@@ -164,11 +178,13 @@ impl EntroCloudApp {
             active_page,
             wizard: WizardState::new(),
             auto_wizard_evaluated: false,
+            was_unlocked: initially_unlocked,
             init_new_vault_mode: false,
             passphrase_input: Zeroizing::new(String::new()),
             confirm_passphrase_input: Zeroizing::new(String::new()),
             show_unlock_pass: false,
             unlock_error: None,
+            unlock_autofocused: false,
             selected_backup_job_id: None,
             backup_job_modal: BackupJobModalState::new_blank(),
             restore_modal: RestoreModalState::default(),
@@ -178,6 +194,7 @@ impl EntroCloudApp {
             sharing_state,
             share_import_modal,
             mount_point_input: default_mount,
+            last_daemon_mount_point: None,
             use_portable_sandbox: false,
             bench_payload_mib: 128,
         }
@@ -207,6 +224,64 @@ impl EntroCloudApp {
         self
     }
 
+    /// Configures the app for `--screenshot-modals <OUTPUT_DIR>` to capture GPU-rendered modal dialogs.
+    #[must_use]
+    pub fn with_modal_screenshot_tour(
+        mut self,
+        output_dir: PathBuf,
+        result_slot: Arc<Mutex<Result<usize, String>>>,
+    ) -> Self {
+        self.persist_prefs_to_disk = false;
+        self.auto_wizard_evaluated = true;
+        self.apply_modal_tour_step(0);
+        self.tour_driver = Some(ScreenshotTourDriver::new_modals(output_dir));
+        self.tour_result = Some(result_slot);
+        self
+    }
+
+    fn apply_modal_tour_step(&mut self, idx: usize) {
+        let Some(&(_, _, theme)) = MODAL_TOUR_STEPS.get(idx) else {
+            return;
+        };
+        self.prefs.theme = theme;
+        self.prefs.wizard_completed = true;
+        self.wizard.open = false;
+        self.backup_job_modal.open = false;
+        self.restore_modal.open = false;
+        self.remove_confirm_job = None;
+        self.files_state.note_modal.open = false;
+        self.files_state.new_folder_open = false;
+        self.files_state.rename_target = None;
+        self.files_state.delete_target = None;
+        self.share_import_modal.open = false;
+
+        {
+            let mut guard = self.worker.state.lock();
+            populate_demo_worker_state(&mut guard);
+        }
+
+        match idx {
+            0 | 1 => {
+                self.active_page = NavPage::Backups;
+                self.backup_job_modal.open_for_new();
+                self.backup_job_modal
+                    .set_picked_source_folder(std::path::Path::new(r"C:\Users\Alex\Documents"));
+            }
+            2 => {
+                self.active_page = NavPage::MyFiles;
+                self.open_note_modal(
+                    "/Documents/Recovery Codes.md",
+                    "# Vault Recovery Notes\n\n- Primary cloud: GoogleDrive (/EntroCloud)\n- Mirror backup: CloudflareR2\n- Emergency contact keybox epoch: 2\n",
+                );
+            }
+            3 => {
+                self.active_page = NavPage::Backups;
+                self.open_restore_modal("job-docs", "Documents", r"C:\Users\Alex\Desktop");
+            }
+            _ => {}
+        }
+    }
+
     /// Returns a reference to the asynchronous OS dialog manager (used in non-blocking dialog unit tests).
     #[must_use]
     pub fn dialogs(&self) -> &AsyncDialogs {
@@ -232,6 +307,64 @@ impl EntroCloudApp {
     #[must_use]
     pub fn backup_modal_source_path(&self) -> &str {
         &self.backup_job_modal.source_path
+    }
+
+    /// Opens the Add Protected Backup Folder modal (for layout/geometry tests and tour inspection).
+    pub fn open_backup_job_modal(&mut self) {
+        self.backup_job_modal.open_for_new();
+    }
+
+    /// Opens the Restore Encrypted Backup modal (for layout/geometry tests).
+    pub fn open_restore_modal(&mut self, job_id: &str, job_name: &str, dest_parent: &str) {
+        self.restore_modal.open = true;
+        self.restore_modal.job_id = job_id.to_owned();
+        self.restore_modal.job_name = job_name.to_owned();
+        self.restore_modal.destination_parent = dest_parent.to_owned();
+        self.restore_modal.error = None;
+    }
+
+    /// Opens the Remove Backup Schedule confirmation modal (for layout/geometry tests).
+    pub fn open_remove_job_modal(&mut self, job_id: &str, job_name: &str) {
+        self.remove_confirm_job = Some((job_id.to_owned(), job_name.to_owned()));
+    }
+
+    /// Opens the Disconnect Cloud Account confirmation modal (for layout/geometry tests).
+    pub fn open_disconnect_cloud_modal(&mut self, remote_id: &str) {
+        self.clouds_state.remove_remote_confirm = Some(remote_id.to_owned());
+    }
+
+    /// Opens the Private Encrypted Note modal (for layout/geometry tests).
+    pub fn open_note_modal(&mut self, vpath: &str, body: &str) {
+        self.files_state.note_modal.open = true;
+        self.files_state.note_modal.virtual_path = vpath.to_owned();
+        *self.files_state.note_modal.content = body.to_owned();
+        self.files_state.note_modal.dirty = false;
+        self.files_state.note_modal.loading = false;
+    }
+
+    /// Opens the New Folder modal (for layout/geometry tests).
+    pub fn open_new_folder_modal(&mut self, initial_name: &str) {
+        self.files_state.new_folder_open = true;
+        self.files_state.new_folder_name = initial_name.to_owned();
+    }
+
+    /// Opens the Rename Item modal (for layout/geometry tests).
+    pub fn open_rename_modal(&mut self, orig_vpath: &str, suggested_name: &str) {
+        self.files_state.rename_target = Some(orig_vpath.to_owned());
+        self.files_state.rename_new_path = suggested_name.to_owned();
+    }
+
+    /// Opens the Delete from Vault modal (for layout/geometry tests).
+    pub fn open_delete_modal(&mut self, target_vpath: &str, is_dir: bool) {
+        self.files_state.delete_target = Some((target_vpath.to_owned(), is_dir));
+        self.files_state.delete_recursive = is_dir;
+    }
+
+    /// Opens the Save Shared Encrypted File modal (for layout/geometry tests).
+    pub fn open_share_import_modal(&mut self, uri: &str, dest_vpath: &str) {
+        self.share_import_modal.open = true;
+        self.share_import_modal.uri = Zeroizing::new(uri.to_owned());
+        self.share_import_modal.dest_virtual_path = dest_vpath.to_owned();
     }
 
     /// Returns whether the `ImportCapabilityShare` modal is open and its pre-populated target path.
@@ -294,7 +427,7 @@ impl EntroCloudApp {
         apply_palette(ctx, &pal);
 
         self.poll_async_dialogs();
-        let snap = self.sync_frame_snapshot();
+        let snap = self.sync_frame_snapshot(ctx);
         self.evaluate_first_run_wizard(&snap);
 
         let vault_initialized = snap
@@ -302,6 +435,29 @@ impl EntroCloudApp {
             .as_ref()
             .is_some_and(|s| s.vault_id.is_some() || s.unlocked);
         let vault_unlocked = snap.status.as_ref().is_some_and(|s| s.unlocked);
+        if self.was_unlocked && !vault_unlocked {
+            self.files_state.zeroize_secrets();
+            self.sharing_state.zeroize_secrets();
+            self.backup_job_modal.open = false;
+            self.restore_modal.open = false;
+            self.remove_confirm_job = None;
+            self.files_state.note_modal.open = false;
+            self.files_state.note_modal.loading = false;
+            self.files_state.new_folder_open = false;
+            self.files_state.rename_target = None;
+            self.files_state.delete_target = None;
+            self.clouds_state.remove_remote_confirm = None;
+            self.share_import_modal.uri.zeroize();
+            self.share_import_modal.open = false;
+            if self.wizard.open && self.wizard.standalone_add_cloud {
+                self.wizard.zeroize_secrets();
+                self.wizard.open = false;
+                self.wizard.standalone_add_cloud = false;
+            }
+            self.unlock_error = None;
+        }
+        self.was_unlocked = vault_unlocked;
+
         let remotes = snap
             .status
             .as_ref()
@@ -316,7 +472,6 @@ impl EntroCloudApp {
                         .inner_margin(Margin::symmetric(34.0, 22.0)),
                 )
                 .show(ctx, |ui| {
-                    self.render_toast_strip(ui, &pal, &snap);
                     let wiz_outcome = self.wizard.render(
                         ctx,
                         ui,
@@ -332,6 +487,7 @@ impl EntroCloudApp {
                     );
                     self.apply_wizard_outcome(wiz_outcome);
                 });
+            self.render_toast_strip(ctx, &pal, &snap);
             self.flush_prefs_if_dirty();
             return;
         }
@@ -384,12 +540,15 @@ impl EntroCloudApp {
                         &mut self.passphrase_input,
                         &mut self.show_unlock_pass,
                         &mut self.unlock_error,
+                        &mut self.unlock_autofocused,
                     );
                 });
-            self.render_global_modals(ctx, &pal, &snap);
             self.flush_prefs_if_dirty();
             return;
         }
+
+        // Reset auto-focus flag so locking the vault later focuses the Master Password input again
+        self.unlock_autofocused = false;
 
         // Unlocked Main Workspace: Fixed 248px CloudBridge Left Sidebar + Top Header + Active View
         self.render_sidebar(ctx, &pal, &snap);
@@ -402,8 +561,6 @@ impl EntroCloudApp {
                     .inner_margin(Margin::symmetric(28.0, 20.0)),
             )
             .show(ctx, |ui| {
-                self.render_toast_strip(ui, &pal, &snap);
-
                 let split_tour = self
                     .tour_driver
                     .as_ref()
@@ -508,6 +665,7 @@ impl EntroCloudApp {
                 }
             });
 
+        self.render_toast_strip(ctx, &pal, &snap);
         self.render_global_modals(ctx, &pal, &snap);
         self.flush_prefs_if_dirty();
     }
@@ -589,8 +747,10 @@ impl EntroCloudApp {
                     DialogPurpose::BackupJobSourceFolder => {
                         self.backup_job_modal.set_picked_source_folder(&path);
                     }
-                    DialogPurpose::RestoreDestinationParent { .. } => {
-                        self.restore_modal.destination_parent = path.display().to_string();
+                    DialogPurpose::RestoreDestinationParent { job_id, .. } => {
+                        if self.restore_modal.open && self.restore_modal.job_id == job_id {
+                            self.restore_modal.destination_parent = path.display().to_string();
+                        }
                     }
                     DialogPurpose::MountPointFolder => {
                         self.mount_point_input = path.display().to_string();
@@ -611,26 +771,40 @@ impl EntroCloudApp {
         }
     }
 
-    fn sync_frame_snapshot(&mut self) -> FrameSnapshot {
-        let guard = self.worker.state.lock();
+    fn sync_frame_snapshot(&mut self, ctx: &egui::Context) -> FrameSnapshot {
+        let mut guard = self.worker.state.lock();
 
-        if let Some((ref vpath, ref content)) = guard.loaded_note
-            && self.files_state.last_loaded_note_vpath.as_deref() != Some(vpath.as_str())
-        {
-            self.files_state.note_modal.open = true;
-            self.files_state.note_modal.virtual_path = vpath.clone();
-            *self.files_state.note_modal.content = (**content).clone();
-            self.files_state.note_modal.dirty = false;
-            self.files_state.last_loaded_note_vpath = Some(vpath.clone());
+        // Auto-dismiss transient info banners after 6 seconds so they never clutter the workspace
+        if let Some(set_at) = guard.toast_info_set_at {
+            if set_at.elapsed() >= Duration::from_secs(6) {
+                guard.toast_info = None;
+                guard.toast_info_set_at = None;
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(500));
+            }
         }
+
+        // Consume one-shot loaded note event so reopening the same note always reloads cleanly
+        if let Some((vpath, content)) = guard.loaded_note.take() {
+            self.files_state.note_modal.open = true;
+            self.files_state.note_modal.virtual_path = vpath;
+            *self.files_state.note_modal.content = (*content).clone();
+            self.files_state.note_modal.dirty = false;
+            self.files_state.note_modal.loading = false;
+        }
+
+        // Consume one-shot connected remote event so reconnecting a same-named cloud always fires
+        let last_connected_remote = guard.last_connected_remote.take();
 
         if let Some(ref st) = guard.status {
             self.clouds_state
                 .sync_from_status(&st.remotes, st.routing_policy.as_ref());
             if let Some(ref mp) = st.mount_point
                 && !mp.is_empty()
+                && self.last_daemon_mount_point.as_deref() != Some(mp.as_str())
             {
                 self.mount_point_input = mp.clone();
+                self.last_daemon_mount_point = Some(mp.clone());
             }
         }
 
@@ -646,9 +820,12 @@ impl EntroCloudApp {
             entries: guard.entries.clone(),
             detected_clouds: guard.detected_clouds.clone(),
             remote_tests: guard.remote_tests.clone(),
+            testing_remotes: guard.testing_remotes.clone(),
+            backup_request_inflight: guard.backup_request_inflight,
+            unlock_inflight: guard.unlock_inflight,
             last_backup_report: guard.last_backup_report.clone(),
             last_restored_folder: guard.last_restored_folder.clone(),
-            last_connected_remote: guard.last_connected_remote.clone(),
+            last_connected_remote,
             recipient_bundle: guard.recipient_bundle.clone(),
             latest_share_uri: guard.latest_share_uri.clone(),
             keybox_info: guard.keybox_info.clone(),
@@ -742,7 +919,7 @@ impl EntroCloudApp {
                     let is_active = self.active_page == page;
                     if sidebar_nav_item(ui, pal, icon, label, badge, is_active).clicked() {
                         self.active_page = page;
-                        if page == NavPage::MyFiles && snap.entries.is_empty() {
+                        if page == NavPage::MyFiles {
                             self.worker.send(UiCommand::ListDirectory {
                                 virtual_path: snap.current_dir.clone(),
                             });
@@ -757,6 +934,9 @@ impl EntroCloudApp {
                     ui.spacing_mut().item_spacing.y = 10.0;
 
                     ui.horizontal(|ui| {
+                        let (dot_r, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
+                        ui.painter()
+                            .circle_filled(dot_r.center(), 3.0, pal.sidebar_accent);
                         ui.label(
                             RichText::new("Active in system tray")
                                 .font(FontId::proportional(11.4))
@@ -811,15 +991,33 @@ impl EntroCloudApp {
 
                     // Pooled Storage Mini-Card (exact 76px bottom-anchored card painted top-down)
                     let card_w = ui.available_width().max(160.0);
-                    let (card_r, _) =
-                        ui.allocate_exact_size(Vec2::new(card_w, 76.0), Sense::hover());
+                    let (card_r, card_resp) =
+                        ui.allocate_exact_size(Vec2::new(card_w, 76.0), Sense::click());
+                    let card_resp =
+                        card_resp.on_hover_text("View connected clouds and storage usage");
+                    if card_resp.hovered() {
+                        ctx.set_cursor_icon(CursorIcon::PointingHand);
+                    }
+                    if card_resp.clicked() {
+                        self.active_page = NavPage::CloudConnections;
+                    }
                     if ui.is_rect_visible(card_r) {
+                        let bg = if card_resp.hovered() {
+                            pal.sidebar_active_bg.gamma_multiply(1.18)
+                        } else {
+                            pal.sidebar_active_bg
+                        };
+                        let border_col = if card_resp.hovered() {
+                            pal.sidebar_accent.gamma_multiply(0.65)
+                        } else {
+                            pal.sidebar_border
+                        };
                         ui.painter()
-                            .rect_filled(card_r, Rounding::same(10.0), pal.sidebar_active_bg);
+                            .rect_filled(card_r, Rounding::same(10.0), bg);
                         ui.painter().rect_stroke(
                             card_r,
                             Rounding::same(10.0),
-                            Stroke::new(1.0, pal.sidebar_border),
+                            Stroke::new(1.0, border_col),
                         );
 
                         let pooled = st.and_then(|s| s.pooled_quota.as_ref());
@@ -850,7 +1048,7 @@ impl EntroCloudApp {
                             Pos2::new(card_r.right() - 13.0, card_r.top() + 17.0),
                             Align2::RIGHT_CENTER,
                             format!("{:.0}%", pct * 100.0),
-                            semibold_font(ctx, 11.5),
+                            FontId::monospace(11.5),
                             pal.sidebar_accent,
                         );
 
@@ -916,10 +1114,17 @@ impl EntroCloudApp {
             .frame(
                 egui::Frame::none()
                     .fill(pal.topbar_bg)
-                    .stroke(Stroke::new(1.0, pal.card_border))
                     .inner_margin(Margin::symmetric(28.0, 12.0)),
             )
             .show(ctx, |ui| {
+                let clip = ui.clip_rect();
+                ui.painter().line_segment(
+                    [
+                        Pos2::new(clip.left(), clip.bottom() - 0.5),
+                        Pos2::new(clip.right(), clip.bottom() - 0.5),
+                    ],
+                    Stroke::new(1.0, pal.card_border),
+                );
                 ui.horizontal_centered(|ui| {
                     ui.label(
                         RichText::new(page_title)
@@ -930,7 +1135,7 @@ impl EntroCloudApp {
                     status_pill(ui, pal, pill_icon, pill_label, pill_tone);
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if danger_button(ui, pal, Some(Icon::Lock), "Lock").clicked() {
+                        if secondary_button(ui, pal, Some(Icon::Lock), "Lock").clicked() {
                             self.worker.send(UiCommand::LockVault);
                         }
                         if secondary_button(ui, pal, Some(Icon::Refresh), "Sync Now").clicked() {
@@ -941,81 +1146,142 @@ impl EntroCloudApp {
             });
     }
 
-    fn render_toast_strip(&mut self, ui: &mut egui::Ui, pal: &Palette, snap: &FrameSnapshot) {
-        if let Some(ref err) = snap.toast_error {
-            egui::Frame::none()
-                .fill(pal.danger_bg)
-                .stroke(Stroke::new(1.0, pal.danger_border))
-                .rounding(Rounding::same(9.0))
-                .inner_margin(Margin::symmetric(14.0, 9.0))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let (ic_r, _) = ui.allocate_exact_size(Vec2::splat(17.0), Sense::hover());
-                        paint_icon(ui.painter(), ic_r, Icon::Alert, pal.danger_fg);
-                        ui.label(RichText::new(err).color(pal.danger_fg).size(12.8));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if secondary_button(ui, pal, None, "Dismiss").clicked() {
-                                self.worker.state.lock().toast_error = None;
-                            }
-                        });
-                    });
-                });
-            ui.add_space(10.0);
-        } else if let Some(ref busy) = snap.busy_task {
-            egui::Frame::none()
-                .fill(pal.accent_soft_bg)
-                .stroke(Stroke::new(1.0, pal.primary_btn.gamma_multiply(0.35)))
-                .rounding(Rounding::same(9.0))
-                .inner_margin(Margin::symmetric(14.0, 9.0))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let (ic_r, _) = ui.allocate_exact_size(Vec2::splat(17.0), Sense::hover());
-                        paint_icon(ui.painter(), ic_r, Icon::Refresh, pal.accent_soft_fg);
-                        ui.label(RichText::new(busy).color(pal.ink).size(12.8));
-                    });
-                });
-            ui.add_space(10.0);
-        } else if let Some(ref info) = snap.toast_info {
-            egui::Frame::none()
-                .fill(pal.ok_bg)
-                .stroke(Stroke::new(1.0, pal.ok_fg.gamma_multiply(0.30)))
-                .rounding(Rounding::same(9.0))
-                .inner_margin(Margin::symmetric(14.0, 8.0))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let (ic_r, _) = ui.allocate_exact_size(Vec2::splat(17.0), Sense::hover());
-                        paint_icon(ui.painter(), ic_r, Icon::Check, pal.ok_fg);
-                        ui.label(RichText::new(info).color(pal.ink).size(12.6));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if secondary_button(ui, pal, None, "OK").clicked() {
-                                self.worker.state.lock().toast_info = None;
-                            }
-                        });
-                    });
-                });
-            ui.add_space(10.0);
+    fn render_toast_strip(&mut self, ctx: &egui::Context, pal: &Palette, snap: &FrameSnapshot) {
+        if snap.toast_error.is_none() && snap.busy_task.is_none() && snap.toast_info.is_none() {
+            return;
         }
+        let max_w = (ctx.screen_rect().width() - 48.0).clamp(280.0, 560.0);
+        let shadow = egui::epaint::Shadow {
+            offset: Vec2::new(0.0, 4.0),
+            blur: 14.0,
+            spread: 0.0,
+            color: Color32::from_black_alpha(if pal.is_dark { 96 } else { 32 }),
+        };
+
+        egui::Area::new(egui::Id::new("ec_floating_toast"))
+            .order(egui::Order::Foreground)
+            .anchor(Align2::CENTER_BOTTOM, Vec2::new(0.0, -18.0))
+            .interactable(true)
+            .show(ctx, |ui| {
+                ui.set_max_width(max_w);
+                if let Some(ref err) = snap.toast_error {
+                    let mut dismiss = false;
+                    egui::Frame::none()
+                        .fill(pal.danger_bg)
+                        .stroke(Stroke::new(1.0, pal.danger_border))
+                        .rounding(Rounding::same(10.0))
+                        .shadow(shadow)
+                        .inner_margin(Margin::symmetric(14.0, 9.0))
+                        .show(ui, |ui| {
+                            input_row_with_right_widget(
+                                ui,
+                                |ui| {
+                                    if icon_button(ui, pal, Icon::Close, "Dismiss").clicked() {
+                                        dismiss = true;
+                                    }
+                                },
+                                |ui, rem_w| {
+                                    ui.set_max_width(rem_w);
+                                    let (ic_r, _) =
+                                        ui.allocate_exact_size(Vec2::splat(17.0), Sense::hover());
+                                    paint_icon(ui.painter(), ic_r, Icon::Alert, pal.danger_fg);
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(err).color(pal.danger_fg).size(12.8),
+                                        )
+                                        .wrap(),
+                                    )
+                                    .on_hover_text(err);
+                                },
+                            );
+                        });
+                    if dismiss {
+                        self.worker.state.lock().toast_error = None;
+                    }
+                } else if let Some(ref busy) = snap.busy_task {
+                    egui::Frame::none()
+                        .fill(pal.accent_soft_bg)
+                        .stroke(Stroke::new(1.0, pal.primary_btn.gamma_multiply(0.35)))
+                        .rounding(Rounding::same(10.0))
+                        .shadow(shadow)
+                        .inner_margin(Margin::symmetric(14.0, 9.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let (ic_r, _) =
+                                    ui.allocate_exact_size(Vec2::splat(17.0), Sense::hover());
+                                paint_icon(ui.painter(), ic_r, Icon::Refresh, pal.accent_soft_fg);
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(busy).color(pal.ink).size(12.8),
+                                    )
+                                    .wrap(),
+                                )
+                                .on_hover_text(busy);
+                            });
+                        });
+                } else if let Some(ref info) = snap.toast_info {
+                    let mut ok_clicked = false;
+                    egui::Frame::none()
+                        .fill(pal.ok_bg)
+                        .stroke(Stroke::new(1.0, pal.ok_fg.gamma_multiply(0.30)))
+                        .rounding(Rounding::same(10.0))
+                        .shadow(shadow)
+                        .inner_margin(Margin::symmetric(14.0, 8.0))
+                        .show(ui, |ui| {
+                            input_row_with_right_widget(
+                                ui,
+                                |ui| {
+                                    if icon_button(ui, pal, Icon::Close, "Dismiss").clicked() {
+                                        ok_clicked = true;
+                                    }
+                                },
+                                |ui, rem_w| {
+                                    ui.set_max_width(rem_w);
+                                    let (ic_r, _) =
+                                        ui.allocate_exact_size(Vec2::splat(17.0), Sense::hover());
+                                    paint_icon(ui.painter(), ic_r, Icon::Check, pal.ok_fg);
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(info).color(pal.ink).size(12.6),
+                                        )
+                                        .wrap(),
+                                    )
+                                    .on_hover_text(info);
+                                },
+                            );
+                        });
+                    if ok_clicked {
+                        let mut g = self.worker.state.lock();
+                        g.toast_info = None;
+                        g.toast_info_set_at = None;
+                    }
+                }
+            });
     }
 
     fn render_global_modals(&mut self, ctx: &egui::Context, pal: &Palette, snap: &FrameSnapshot) {
         // `--open-uri` (`ec://` or `zv://`) Private Share Link Modal
         if self.share_import_modal.open {
-            egui::Window::new("Save Shared Encrypted File")
-                .collapsible(false)
-                .resizable(true)
-                .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-                .default_width(500.0)
-                .show(ctx, |ui| {
+            let mut close_req = false;
+            modal_dialog(
+                ctx,
+                pal,
+                "ec_share_import_modal",
+                "Save Shared Encrypted File",
+                520.0,
+                &mut close_req,
+                |ui| {
                     form_label(ui, pal, "Private Share Link (ec:// or zv://)");
                     ui.add(
                         egui::TextEdit::multiline(&mut *self.share_import_modal.uri)
+                            .margin(Margin::symmetric(10.0, 8.0))
                             .desired_rows(3)
                             .desired_width(f32::INFINITY)
                             .font(FontId::monospace(11.5)),
                     );
 
                     let trimmed = self.share_import_modal.uri.trim();
-                    if !trimmed.is_empty() {
+                    let uri_valid = if !trimmed.is_empty() {
                         ui.add_space(4.0);
                         match CapabilityUri::parse(trimmed) {
                             Ok(parsed) => {
@@ -1026,6 +1292,7 @@ impl EntroCloudApp {
                                     &format!("Verified link format ({})", parsed.backend_hint),
                                     PillTone::Ok,
                                 );
+                                true
                             }
                             Err(err) => {
                                 ui.label(
@@ -1033,32 +1300,42 @@ impl EntroCloudApp {
                                         .color(pal.danger_fg)
                                         .size(12.0),
                                 );
+                                false
                             }
                         }
-                    }
+                    } else {
+                        false
+                    };
 
                     ui.add_space(8.0);
                     form_label(ui, pal, "Save into vault path");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.share_import_modal.dest_virtual_path)
-                            .desired_width(f32::INFINITY),
-                    );
+                    ui.add(text_input_single(
+                        &mut self.share_import_modal.dest_virtual_path,
+                        "/Shared/received_file",
+                    ));
 
-                    ui.add_space(12.0);
+                    let can_save =
+                        uri_valid && !self.share_import_modal.dest_virtual_path.trim().is_empty();
+
+                    ui.add_space(14.0);
                     ui.horizontal(|ui| {
                         if secondary_button(ui, pal, None, "Cancel").clicked() {
                             self.share_import_modal.uri.zeroize();
                             self.share_import_modal.open = false;
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if primary_button(
-                                ui,
-                                pal,
-                                Some(Icon::Download),
-                                "Verify & Save to Vault",
-                            )
-                            .clicked()
-                            {
+                            let clicked = ui
+                                .add_enabled_ui(can_save, |ui| {
+                                    primary_button(
+                                        ui,
+                                        pal,
+                                        Some(Icon::Download),
+                                        "Verify & Save to Vault",
+                                    )
+                                })
+                                .inner
+                                .clicked();
+                            if can_save && clicked {
                                 let uri_copy =
                                     Zeroizing::new(self.share_import_modal.uri.trim().to_owned());
                                 let dest =
@@ -1073,7 +1350,12 @@ impl EntroCloudApp {
                             }
                         });
                     });
-                });
+                },
+            );
+            if close_req {
+                self.share_import_modal.uri.zeroize();
+                self.share_import_modal.open = false;
+            }
         }
     }
 
@@ -1090,50 +1372,60 @@ impl EntroCloudApp {
             })
         });
 
-        let mut advance_to: Option<usize> = None;
+        let mut advance_to: Option<(usize, bool)> = None;
         let mut close_now = false;
 
         if let Some(ref mut drv) = self.tour_driver
             && let Some(img) = captured_img
             && drv.screenshot_requested
-            && let Some(&(_, filename, _)) = TOUR_STEPS.get(drv.step_idx)
         {
-            let out_path = drv.output_dir.join(filename);
-            match write_color_image_png(&img, &out_path) {
-                Ok(()) => {
-                    drv.written_files.push(out_path);
-                    drv.step_idx += 1;
-                    drv.settle_frames = 0;
-                    drv.screenshot_requested = false;
-                    drv.wait_frames = 0;
-                    if drv.step_idx >= TOUR_STEPS.len() {
+            let steps = if drv.modal_mode {
+                &MODAL_TOUR_STEPS[..]
+            } else {
+                &TOUR_STEPS[..]
+            };
+            if let Some(&(_, filename, _)) = steps.get(drv.step_idx) {
+                let out_path = drv.output_dir.join(filename);
+                match write_color_image_png(&img, &out_path) {
+                    Ok(()) => {
+                        drv.written_files.push(out_path);
+                        drv.step_idx += 1;
+                        drv.settle_frames = 0;
+                        drv.screenshot_requested = false;
+                        drv.wait_frames = 0;
+                        if drv.step_idx >= steps.len() {
+                            if let Some(ref slot) = self.tour_result {
+                                *slot.lock() = Ok(drv.written_files.len());
+                            }
+                            close_now = true;
+                        } else {
+                            advance_to = Some((drv.step_idx, drv.modal_mode));
+                        }
+                    }
+                    Err(err) => {
+                        drv.error = Some(err.clone());
                         if let Some(ref slot) = self.tour_result {
-                            *slot.lock() = Ok(drv.written_files.len());
+                            *slot.lock() = Err(err);
                         }
                         close_now = true;
-                    } else {
-                        advance_to = Some(drv.step_idx);
                     }
-                }
-                Err(err) => {
-                    drv.error = Some(err.clone());
-                    if let Some(ref slot) = self.tour_result {
-                        *slot.lock() = Err(err);
-                    }
-                    close_now = true;
                 }
             }
         }
 
-        if let Some(next_idx) = advance_to {
-            let mut guard = self.worker.state.lock();
-            configure_tour_step_ui(
-                next_idx,
-                &mut guard,
-                &mut self.prefs,
-                &mut self.active_page,
-                &mut self.wizard,
-            );
+        if let Some((next_idx, is_modal)) = advance_to {
+            if is_modal {
+                self.apply_modal_tour_step(next_idx);
+            } else {
+                let mut guard = self.worker.state.lock();
+                configure_tour_step_ui(
+                    next_idx,
+                    &mut guard,
+                    &mut self.prefs,
+                    &mut self.active_page,
+                    &mut self.wizard,
+                );
+            }
         }
 
         if close_now {
@@ -1147,8 +1439,8 @@ impl EntroCloudApp {
         if let Some(ref mut drv) = self.tour_driver {
             if !drv.screenshot_requested {
                 drv.settle_frames = drv.settle_frames.saturating_add(1);
-                // Allow 2 settle frames so multi-pass column/scroll layouts stabilize before capture.
-                if drv.settle_frames >= 2 {
+                // Allow 4 settle frames so modal sizing passes + column/scroll layouts stabilize cleanly.
+                if drv.settle_frames >= 4 {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
                     drv.screenshot_requested = true;
                     drv.wait_frames = 0;

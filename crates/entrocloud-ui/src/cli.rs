@@ -39,6 +39,11 @@ pub struct UiCliArgs {
     #[arg(long = "screenshot-tour", value_name = "OUTPUT_DIR")]
     pub screenshot_tour: Option<PathBuf>,
 
+    /// Capture GPU-rendered modal verification screenshots (`Add Backup Folder` Light & Dark,
+    /// `Private Encrypted Note`, and `Restore Backup`) into `<OUTPUT_DIR>` and exit `0`.
+    #[arg(long = "screenshot-modals", value_name = "OUTPUT_DIR")]
+    pub screenshot_modals: Option<PathBuf>,
+
     /// Optional positional `ec://...` or `zv://...` URI passed directly by OS protocol handlers.
     #[arg(value_name = "URI")]
     pub positional_uri: Option<String>,

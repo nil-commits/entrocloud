@@ -4,13 +4,14 @@
 
 use std::collections::HashSet;
 
-use eframe::egui::{self, Align2, CursorIcon, FontId, RichText, Rounding, Sense, Stroke, Vec2};
+use eframe::egui::{self, FontId, Margin, RichText, Sense, Vec2};
 use entrocloud_types::{RemoteAccountSummary, RoutingPolicy};
 
 use crate::icons::{Icon, paint_icon};
 use crate::theme::{
-    Palette, PillTone, card_frame, danger_button, form_label, primary_button, progress_bar_clean,
-    secondary_button, semibold_font, small_button, status_pill, sub_card_frame,
+    Palette, PillTone, card_frame, danger_button, form_label, interactive_card, modal_dialog,
+    primary_button, progress_bar_clean, secondary_button, semibold_font, small_button,
+    status_pill, sub_card_frame,
 };
 use crate::tray_common::format_bytes_human;
 use crate::views::FrameSnapshot;
@@ -35,8 +36,11 @@ pub struct CloudsViewState {
     pub folder_rules: Vec<(String, String)>,
     pub new_rule_folder: String,
     pub new_rule_backend: String,
+    pub rule_error: Option<String>,
     pub initialized_from_daemon: bool,
     pub remove_remote_confirm: Option<String>,
+    last_synced_remote_ids: Vec<String>,
+    last_synced_policy: Option<RoutingPolicy>,
 }
 
 impl Default for CloudsViewState {
@@ -49,29 +53,48 @@ impl Default for CloudsViewState {
             folder_rules: Vec::new(),
             new_rule_folder: "/Photos".to_owned(),
             new_rule_backend: String::new(),
+            rule_error: None,
             initialized_from_daemon: false,
             remove_remote_confirm: None,
+            last_synced_remote_ids: Vec::new(),
+            last_synced_policy: None,
         }
     }
 }
 
 impl CloudsViewState {
     pub fn sync_from_status(&mut self, remotes: &[RemoteAccountSummary], policy: Option<&RoutingPolicy>) {
-        if self.initialized_from_daemon {
+        let cur_ids: Vec<String> = remotes.iter().map(|r| r.id.clone()).collect();
+        let remotes_changed = cur_ids != self.last_synced_remote_ids;
+        let policy_changed = policy != self.last_synced_policy.as_ref();
+
+        if self.initialized_from_daemon && !remotes_changed && !policy_changed {
             return;
         }
-        for r in remotes {
-            self.selected_backends.insert(r.id.clone());
-        }
-        if let Some(first) = remotes.first() {
-            if self.default_backend.is_empty() {
-                self.default_backend = first.id.clone();
+
+        if remotes_changed {
+            // Keep existing selections that still exist and automatically select newly added clouds
+            let old_known: HashSet<&str> = self.last_synced_remote_ids.iter().map(String::as_str).collect();
+            self.selected_backends.retain(|id| cur_ids.iter().any(|c| c == id));
+            self.folder_rules
+                .retain(|(_, backend)| cur_ids.iter().any(|c| c == backend));
+            for r in remotes {
+                if !old_known.contains(r.id.as_str()) {
+                    self.selected_backends.insert(r.id.clone());
+                }
             }
-            if self.new_rule_backend.is_empty() {
-                self.new_rule_backend = first.id.clone();
+            if !cur_ids.iter().any(|c| c == &self.default_backend) {
+                self.default_backend = cur_ids.first().cloned().unwrap_or_default();
             }
+            if !cur_ids.iter().any(|c| c == &self.new_rule_backend) {
+                self.new_rule_backend = cur_ids.first().cloned().unwrap_or_default();
+            }
+            self.last_synced_remote_ids = cur_ids;
         }
-        if let Some(pol) = policy {
+
+        if (!self.initialized_from_daemon || policy_changed)
+            && let Some(pol) = policy
+        {
             match pol {
                 RoutingPolicy::QuotaPooled { pool_backends } => {
                     self.mode = CloudWorkMode::CombineSpace;
@@ -91,6 +114,7 @@ impl CloudsViewState {
                     self.folder_rules = prefix_routes.clone();
                 }
             }
+            self.last_synced_policy = Some(pol.clone());
             self.initialized_from_daemon = true;
         }
     }
@@ -114,15 +138,10 @@ pub fn render_clouds_view(
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            // Section Header
+            // Section Subtitle + Action
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 4.0;
-                    ui.label(
-                        RichText::new("Cloud Connections")
-                            .font(semibold_font(ctx, 25.0))
-                            .color(pal.ink),
-                    );
+                    ui.set_max_width((ui.available_width() - 180.0).max(160.0));
                     ui.label(
                         RichText::new(
                             "Store your encrypted backups in Google Drive, OneDrive, Dropbox, S3 / R2 / B2, NAS, or an external drive.",
@@ -173,7 +192,7 @@ pub fn render_clouds_view(
                             ui,
                             pal,
                             Some(Icon::CloudPlus),
-                            "+ Connect Your First Cloud",
+                            "Connect Your First Cloud",
                         )
                         .clicked()
                         {
@@ -192,6 +211,14 @@ pub fn render_clouds_view(
                 ui.add_space(10.0);
 
                 // How Should Your Clouds Work Together? Card
+                let pending_policy = build_routing_policy(state, remotes);
+                let daemon_policy = snap.status.as_ref().and_then(|s| s.routing_policy.as_ref());
+                let has_unsaved_changes = match (&pending_policy, daemon_policy) {
+                    (Some(p), Some(d)) => p != d,
+                    (Some(_), None) => true,
+                    (None, _) => true,
+                };
+
                 card_frame(pal).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
@@ -205,19 +232,30 @@ pub fn render_clouds_view(
                                 CloudWorkMode::MirrorCopies => "Mirror Backup Copies",
                                 CloudWorkMode::OrganizeByFolder => "Organize by Folder",
                             };
-                            ui.label(
-                                RichText::new(format!("Active preference: {current_desc}"))
-                                    .font(FontId::proportional(12.6))
-                                    .color(pal.muted),
-                            );
+                            if has_unsaved_changes {
+                                ui.label(
+                                    RichText::new(format!("Unsaved changes: {current_desc}"))
+                                        .font(semibold_font(ctx, 12.6))
+                                        .color(pal.warn_fg),
+                                );
+                            } else {
+                                ui.label(
+                                    RichText::new(format!("Active preference: {current_desc}"))
+                                        .font(FontId::proportional(12.6))
+                                        .color(pal.muted),
+                                );
+                            }
                         });
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if primary_button(ui, pal, Some(Icon::Check), "Save Changes").clicked()
-                                && let Some(policy) = build_routing_policy(state, remotes)
-                            {
-                                worker.send(UiCommand::SetRoutingPolicy { policy });
-                            }
+                            ui.add_enabled_ui(pending_policy.is_some(), |ui| {
+                                if primary_button(ui, pal, Some(Icon::Check), "Save Changes")
+                                    .clicked()
+                                    && let Some(policy) = pending_policy.clone()
+                                {
+                                    worker.send(UiCommand::SetRoutingPolicy { policy });
+                                }
+                            });
                         });
                     });
 
@@ -278,6 +316,14 @@ pub fn render_clouds_view(
                                     }
                                 }
                             });
+                            if state.selected_backends.is_empty() {
+                                ui.add_space(4.0);
+                                ui.label(
+                                    RichText::new("Select at least one cloud location to save.")
+                                        .font(FontId::proportional(12.0))
+                                        .color(pal.danger_fg),
+                                );
+                            }
                             if state.mode == CloudWorkMode::MirrorCopies {
                                 ui.add_space(6.0);
                                 ui.checkbox(
@@ -307,7 +353,7 @@ pub fn render_clouds_view(
                             for (idx, (prefix, backend)) in state.folder_rules.iter().enumerate() {
                                 ui.horizontal(|ui| {
                                     ui.label(
-                                        RichText::new(format!("{prefix}  ->  {backend}"))
+                                        RichText::new(format!("{prefix}  →  {backend}"))
                                             .font(semibold_font(ctx, 12.8))
                                             .color(pal.ink),
                                     );
@@ -320,13 +366,20 @@ pub fn render_clouds_view(
                             }
                             if let Some(i) = remove_idx {
                                 state.folder_rules.remove(i);
+                                state.rule_error = None;
                             }
                             ui.horizontal(|ui| {
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut state.new_rule_folder)
-                                        .desired_width(150.0)
-                                        .hint_text("/Photos"),
-                                );
+                                if ui
+                                    .add(
+                                        egui::TextEdit::singleline(&mut state.new_rule_folder)
+                                            .margin(Margin::symmetric(10.0, 6.5))
+                                            .desired_width(150.0)
+                                            .hint_text("/Photos"),
+                                    )
+                                    .changed()
+                                {
+                                    state.rule_error = None;
+                                }
                                 egui::ComboBox::from_id_salt("new_rule_cloud")
                                     .selected_text(&state.new_rule_backend)
                                     .show_ui(ui, |ui| {
@@ -338,16 +391,40 @@ pub fn render_clouds_view(
                                             );
                                         }
                                     });
-                                if small_button(ui, pal, Some(Icon::Plus), "+ Add Rule", false)
+                                if small_button(ui, pal, Some(Icon::Plus), "Add Rule", false)
                                     .clicked()
                                 {
-                                    let p = state.new_rule_folder.trim().to_owned();
+                                    let raw = state.new_rule_folder.trim();
                                     let b = state.new_rule_backend.trim().to_owned();
-                                    if !p.is_empty() && !b.is_empty() {
-                                        state.folder_rules.push((p, b));
+                                    if !raw.is_empty() && !b.is_empty() {
+                                        let p = if raw.starts_with('/') {
+                                            raw.to_owned()
+                                        } else {
+                                            format!("/{raw}")
+                                        };
+                                        let duplicate = state
+                                            .folder_rules
+                                            .iter()
+                                            .any(|(existing, _)| existing.eq_ignore_ascii_case(&p));
+                                        if duplicate {
+                                            state.rule_error = Some(format!(
+                                                "A rule for '{p}' already exists."
+                                            ));
+                                        } else {
+                                            state.folder_rules.push((p, b));
+                                            state.rule_error = None;
+                                        }
                                     }
                                 }
                             });
+                            if let Some(ref err) = state.rule_error {
+                                ui.add_space(4.0);
+                                ui.label(
+                                    RichText::new(err)
+                                        .font(FontId::proportional(11.8))
+                                        .color(pal.danger_fg),
+                                );
+                            }
                         }
                     });
                 });
@@ -358,12 +435,15 @@ pub fn render_clouds_view(
 
     // Remove Cloud Confirmation Modal
     if let Some(rem_id) = state.remove_remote_confirm.clone() {
-        egui::Window::new("Disconnect Cloud Account")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-            .default_width(410.0)
-            .show(ctx, |ui| {
+        let mut close_req = false;
+        modal_dialog(
+            ctx,
+            pal,
+            "ec_disconnect_cloud_modal",
+            "Disconnect Cloud Account",
+            430.0,
+            &mut close_req,
+            |ui| {
                 ui.label(
                     RichText::new(format!("Disconnect '{rem_id}' from this PC?"))
                         .font(semibold_font(ctx, 16.0))
@@ -377,7 +457,7 @@ pub fn render_clouds_view(
                     .font(FontId::proportional(12.4))
                     .color(pal.muted),
                 );
-                ui.add_space(12.0);
+                ui.add_space(14.0);
                 ui.horizontal(|ui| {
                     if secondary_button(ui, pal, None, "Cancel").clicked() {
                         state.remove_remote_confirm = None;
@@ -389,7 +469,11 @@ pub fn render_clouds_view(
                         }
                     });
                 });
-            });
+            },
+        );
+        if close_req {
+            state.remove_remote_confirm = None;
+        }
     }
 }
 
@@ -402,6 +486,7 @@ fn render_remote_card(
     worker: &UiWorkerHandle,
     state: &mut CloudsViewState,
 ) {
+    let is_testing = snap.testing_remotes.contains(&rem.id);
     let latest_test = snap.remote_tests.get(&rem.id);
     let healthy = latest_test.map_or(rem.health.healthy, |t| t.healthy);
     let latency = latest_test
@@ -414,6 +499,12 @@ fn render_remote_card(
     card_frame(pal)
         .inner_margin(egui::Margin::symmetric(20.0, 16.0))
         .show(ui, |ui| {
+            let is_narrow = ui.available_width() < 580.0;
+            let folder_line = format!(
+                "{}  •  Folder: {}",
+                friendly_kind_label(&rem.kind),
+                rem.root
+            );
             ui.horizontal(|ui| {
                 let icon = match rem.kind.as_str() {
                     "s3" | "webdav" => Icon::HardDrive,
@@ -424,51 +515,96 @@ fn render_remote_card(
                 paint_icon(ui.painter(), ic_r, icon, pal.primary_btn);
 
                 ui.vertical(|ui| {
+                    let left_max_w = if is_narrow {
+                        ui.available_width().max(120.0)
+                    } else {
+                        (ui.available_width() - 260.0).max(160.0)
+                    };
+                    ui.set_max_width(left_max_w);
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.label(
                             RichText::new(&rem.id)
                                 .font(semibold_font(ctx, 16.5))
                                 .color(pal.ink),
                         );
-                        status_pill(
-                            ui,
-                            pal,
-                            Some(if healthy { Icon::Check } else { Icon::Alert }),
-                            if healthy { "Healthy" } else { "Needs attention" },
-                            if healthy {
-                                PillTone::Ok
-                            } else {
-                                PillTone::Danger
-                            },
-                        );
+                        if is_testing {
+                            status_pill(
+                                ui,
+                                pal,
+                                Some(Icon::Refresh),
+                                "Testing...",
+                                PillTone::Accent,
+                            );
+                        } else {
+                            status_pill(
+                                ui,
+                                pal,
+                                Some(if healthy { Icon::Check } else { Icon::Alert }),
+                                if healthy { "Healthy" } else { "Needs attention" },
+                                if healthy {
+                                    PillTone::Ok
+                                } else {
+                                    PillTone::Danger
+                                },
+                            );
+                        }
                         if let Some(ms) = latency {
                             status_pill(ui, pal, None, &format!("{ms} ms"), PillTone::Neutral);
                         }
                     });
-                    ui.label(
-                        RichText::new(format!(
-                            "{}  •  Folder: {}",
-                            friendly_kind_label(&rem.kind),
-                            rem.root
-                        ))
-                        .font(FontId::proportional(12.3))
-                        .color(pal.muted),
-                    );
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&folder_line)
+                                .font(FontId::proportional(12.3))
+                                .color(pal.muted),
+                        )
+                        .truncate(),
+                    )
+                    .on_hover_text(&rem.root);
                 });
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if !is_narrow {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if danger_button(ui, pal, Some(Icon::Trash), "Remove").clicked() {
+                            state.remove_remote_confirm = Some(rem.id.clone());
+                        }
+                        ui.add_enabled_ui(!is_testing, |ui| {
+                            let test_lbl = if is_testing {
+                                "Testing..."
+                            } else {
+                                "Test Connection"
+                            };
+                            if secondary_button(ui, pal, Some(Icon::Refresh), test_lbl).clicked() {
+                                worker.send(UiCommand::TestRemote {
+                                    id: rem.id.clone(),
+                                });
+                            }
+                        });
+                    });
+                }
+            });
+
+            if is_narrow {
+                ui.add_space(8.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_enabled_ui(!is_testing, |ui| {
+                        let test_lbl = if is_testing {
+                            "Testing..."
+                        } else {
+                            "Test Connection"
+                        };
+                        if secondary_button(ui, pal, Some(Icon::Refresh), test_lbl).clicked() {
+                            worker.send(UiCommand::TestRemote {
+                                id: rem.id.clone(),
+                            });
+                        }
+                    });
                     if danger_button(ui, pal, Some(Icon::Trash), "Remove").clicked() {
                         state.remove_remote_confirm = Some(rem.id.clone());
                     }
-                    if secondary_button(ui, pal, Some(Icon::Refresh), "Test Connection").clicked()
-                    {
-                        worker.send(UiCommand::TestRemote {
-                            id: rem.id.clone(),
-                        });
-                    }
                 });
-            });
+            }
 
             ui.add_space(10.0);
             let frac = if quota.total_bytes > 0 {
@@ -478,32 +614,69 @@ fn render_remote_card(
             };
             progress_bar_clean(ui, pal, frac, 6.0);
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                let quota_txt = if quota.total_bytes > 0 {
-                    format!(
-                        "{} used of {} ({} free)",
-                        format_bytes_human(quota.used_bytes),
-                        format_bytes_human(quota.total_bytes),
-                        format_bytes_human(quota.available_bytes)
-                    )
-                } else {
-                    format!("{} stored (no quota cap)", format_bytes_human(quota.used_bytes))
-                };
+            let quota_txt = if quota.total_bytes > 0 {
+                format!(
+                    "{} used of {} ({} free)",
+                    format_bytes_human(quota.used_bytes),
+                    format_bytes_human(quota.total_bytes),
+                    format_bytes_human(quota.available_bytes)
+                )
+            } else {
+                format!("{} stored (no quota cap)", format_bytes_human(quota.used_bytes))
+            };
+            if is_narrow {
                 ui.label(
                     RichText::new(quota_txt)
                         .font(FontId::proportional(11.8))
                         .color(pal.muted),
                 );
-                if let Some(t) = latest_test {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
+                if is_testing {
+                    ui.label(
+                        RichText::new(format!("Testing connection to '{}'...", rem.id))
+                            .font(semibold_font(ctx, 11.8))
+                            .color(pal.primary_btn),
+                    );
+                } else if let Some(t) = latest_test {
+                    ui.add(
+                        egui::Label::new(
                             RichText::new(&t.message)
                                 .font(FontId::proportional(11.8))
                                 .color(if t.healthy { pal.ok_fg } else { pal.danger_fg }),
-                        );
-                    });
+                        )
+                        .wrap(),
+                    )
+                    .on_hover_text(&t.message);
                 }
-            });
+            } else {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(quota_txt)
+                            .font(FontId::proportional(11.8))
+                            .color(pal.muted),
+                    );
+                    if is_testing {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("Testing connection to '{}'...", rem.id))
+                                    .font(semibold_font(ctx, 11.8))
+                                    .color(pal.primary_btn),
+                            );
+                        });
+                    } else if let Some(t) = latest_test {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&t.message)
+                                        .font(FontId::proportional(11.8))
+                                        .color(if t.healthy { pal.ok_fg } else { pal.danger_fg }),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(&t.message);
+                        });
+                    }
+                });
+            }
         });
 }
 
@@ -527,63 +700,54 @@ fn policy_mode_card(
     desc: &str,
     selected: bool,
 ) -> egui::Response {
-    let desired = Vec2::new(ui.available_width(), 108.0);
-    let (rect, resp) = ui.allocate_exact_size(desired, Sense::click());
-    if resp.hovered() {
-        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
-    }
-    if ui.is_rect_visible(rect) {
-        let (bg, border, bw) = if selected {
-            (pal.accent_soft_bg, pal.primary_btn, 1.8)
-        } else if resp.hovered() {
-            (pal.secondary_btn_hover, pal.secondary_btn_border, 1.0)
-        } else {
-            (pal.card_sub_bg, pal.card_border, 1.0)
-        };
-        ui.painter().rect_filled(rect, Rounding::same(10.0), bg);
-        ui.painter()
-            .rect_stroke(rect, Rounding::same(10.0), Stroke::new(bw, border));
-
-        let inner = rect.shrink(13.0);
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
-        let (ic_r, _) = child.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
-        paint_icon(child.painter(), ic_r, icon, pal.primary_btn);
-        child.add_space(4.0);
-        child.label(
-            RichText::new(title)
-                .font(semibold_font(ui.ctx(), 13.6))
-                .color(pal.ink),
-        );
-        child.label(
-            RichText::new(desc)
-                .font(FontId::proportional(11.9))
-                .color(pal.muted),
-        );
-    }
-    resp
+    interactive_card(
+        ui,
+        pal,
+        selected,
+        108.0,
+        Vec2::new(13.0, 13.0),
+        10.0,
+        |ui| {
+            let (ic_r, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
+            paint_icon(ui.painter(), ic_r, icon, pal.primary_btn);
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(title)
+                    .font(semibold_font(ui.ctx(), 13.6))
+                    .color(pal.ink),
+            );
+            ui.label(
+                RichText::new(desc)
+                    .font(FontId::proportional(11.9))
+                    .color(pal.muted),
+            );
+        },
+    )
 }
 
 fn build_routing_policy(
     state: &CloudsViewState,
     remotes: &[RemoteAccountSummary],
 ) -> Option<RoutingPolicy> {
-    let mut chosen: Vec<String> = remotes
+    let chosen: Vec<String> = remotes
         .iter()
         .filter(|r| state.selected_backends.contains(&r.id))
         .map(|r| r.id.clone())
         .collect();
-    if chosen.is_empty() {
-        chosen = remotes.iter().map(|r| r.id.clone()).collect();
-    }
-    if chosen.is_empty() {
-        return None;
-    }
 
     match state.mode {
-        CloudWorkMode::CombineSpace => Some(RoutingPolicy::QuotaPooled {
-            pool_backends: chosen,
-        }),
+        CloudWorkMode::CombineSpace => {
+            if chosen.is_empty() {
+                return None;
+            }
+            Some(RoutingPolicy::QuotaPooled {
+                pool_backends: chosen,
+            })
+        }
         CloudWorkMode::MirrorCopies => {
+            if chosen.is_empty() {
+                return None;
+            }
             let min_ack = if state.strict_mirror_wait_all {
                 chosen.len()
             } else {
@@ -596,7 +760,7 @@ fn build_routing_policy(
         }
         CloudWorkMode::OrganizeByFolder => {
             let default_backend = if state.default_backend.trim().is_empty() {
-                chosen.first()?.clone()
+                remotes.first()?.id.clone()
             } else {
                 state.default_backend.trim().to_owned()
             };

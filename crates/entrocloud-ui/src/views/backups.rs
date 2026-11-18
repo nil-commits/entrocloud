@@ -4,7 +4,8 @@
 use std::path::Path;
 
 use eframe::egui::{
-    self, Align2, CursorIcon, FontId, Pos2, Rect, RichText, Rounding, Sense, Stroke, Vec2,
+    self, Color32, CursorIcon, FontId, Margin, Pos2, Rect, Rgba, RichText, Rounding, Sense, Stroke,
+    Vec2,
 };
 use entrocloud_types::{BackupJobSpec, BackupJobSummary};
 
@@ -12,8 +13,9 @@ use crate::dialogs::{AsyncDialogs, DialogPurpose};
 use crate::icons::{Icon, paint_icon};
 use crate::session::open_in_os_default_app;
 use crate::theme::{
-    Palette, PillTone, card_frame, danger_button, form_label, primary_button, progress_bar_clean,
-    secondary_button, semibold_font, small_button, status_pill, sub_card_frame,
+    Palette, PillTone, card_frame, danger_button, form_label, icon_button,
+    input_row_with_right_widget, modal_dialog, primary_button, progress_bar_clean,
+    secondary_button, semibold_font, small_button, status_pill, sub_card_frame, text_input_single,
 };
 use crate::tray_common::format_bytes_human;
 use crate::views::FrameSnapshot;
@@ -33,6 +35,8 @@ pub struct BackupJobModalState {
     pub enabled: bool,
     pub excludes_text: String,
     pub error: Option<String>,
+    auto_derived_name: Option<String>,
+    auto_derived_vault_folder: Option<String>,
 }
 
 impl Default for BackupJobModalState {
@@ -53,8 +57,10 @@ impl BackupJobModalState {
             interval_minutes: 15,
             custom_minutes: "15".to_owned(),
             enabled: true,
-            excludes_text: "desktop.ini\nThumbs.db\n~$*".to_owned(),
+            excludes_text: "desktop.ini\nThumbs.db\n~$*\n*.tmp\n.DS_Store\nnode_modules\n.git\ntarget\n.venv\n__pycache__".to_owned(),
             error: None,
+            auto_derived_name: None,
+            auto_derived_vault_folder: Some("/Backups/Documents".to_owned()),
         }
     }
 
@@ -78,16 +84,37 @@ impl BackupJobModalState {
             job.excludes.join("\n")
         };
         self.error = None;
+        self.auto_derived_name = None;
+        self.auto_derived_vault_folder = None;
     }
 
     pub fn set_picked_source_folder(&mut self, path: &Path) {
         self.source_path = path.display().to_string();
-        if let Some(base) = path.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty()) {
-            if self.name.trim().is_empty() {
+        self.sync_derived_from_source_path();
+    }
+
+    pub fn sync_derived_from_source_path(&mut self) {
+        if self.editing_id.is_some() {
+            return;
+        }
+        let trimmed = self.source_path.trim().trim_end_matches(['\\', '/']);
+        if let Some(base) = Path::new(trimmed)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .filter(|s| !s.is_empty())
+        {
+            let can_update_name = self.name.trim().is_empty()
+                || self.auto_derived_name.as_deref() == Some(self.name.trim());
+            if can_update_name {
                 self.name = base.to_owned();
+                self.auto_derived_name = Some(base.to_owned());
             }
-            if self.editing_id.is_none() {
-                self.vault_folder = format!("/Backups/{base}");
+            let derived_vault = format!("/Backups/{base}");
+            let can_update_vault = self.vault_folder.trim().is_empty()
+                || self.auto_derived_vault_folder.as_deref() == Some(self.vault_folder.trim());
+            if can_update_vault {
+                self.vault_folder = derived_vault.clone();
+                self.auto_derived_vault_folder = Some(derived_vault);
             }
         }
     }
@@ -168,13 +195,21 @@ pub fn render_backups_view(
             // 2. CloudBridge Status Banner Card
             card_frame(pal).show(ui, |ui| {
                 let is_running = active_activity.is_some()
+                    || snap.backup_request_inflight
                     || jobs
                         .iter()
                         .any(|j| j.status.to_ascii_lowercase().contains("backing up"));
 
                 let (status_title, status_detail, progress_val) = if let Some(act) = active_activity
                 {
-                    ("Backing up your folders...", act.to_owned(), 0.62f32)
+                    let pct = parse_activity_progress_fraction(act).unwrap_or(0.45);
+                    ("Backing up your folders...", act.to_owned(), pct)
+                } else if snap.backup_request_inflight {
+                    (
+                        "Starting folder backup...",
+                        "Scanning local folder changes and preparing encrypted chunks...".to_owned(),
+                        0.12,
+                    )
                 } else if backups_paused {
                     (
                         "Automatic backups are paused",
@@ -188,10 +223,15 @@ pub fn render_backups_view(
                         0.0,
                     )
                 } else if jobs.is_empty() {
+                    let loc_word = if remotes_count == 1 {
+                        "location"
+                    } else {
+                        "locations"
+                    };
                     (
                         "Encrypted backup is ready",
                         format!(
-                            "Connected to {remotes_count} cloud storage location(s). Add a folder from this PC to protect it automatically."
+                            "Connected to {remotes_count} cloud storage {loc_word}. Add a folder from this PC to protect it automatically."
                         ),
                         1.0,
                     )
@@ -203,34 +243,41 @@ pub fn render_backups_view(
                     };
                     (prefix, rep.message.clone(), 1.0)
                 } else {
+                    let folder_word = if jobs.len() == 1 {
+                        "folder"
+                    } else {
+                        "folders"
+                    };
+                    let cloud_word = if remotes_count == 1 {
+                        "cloud"
+                    } else {
+                        "clouds"
+                    };
                     (
                         "Encrypted backup is ready",
                         format!(
-                            "Protecting {} PC folder(s) across {} connected cloud(s).",
+                            "Protecting {} PC {folder_word} across {remotes_count} connected {cloud_word}.",
                             jobs.len(),
-                            remotes_count
                         ),
                         1.0,
                     )
                 };
 
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.set_max_width((ui.available_width() - 260.0).max(260.0));
-                        ui.label(
-                            RichText::new(status_title)
-                                .font(semibold_font(ctx, 19.5))
-                                .color(pal.ink),
-                        );
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(status_detail)
-                                .font(FontId::proportional(13.2))
-                                .color(pal.muted),
-                        );
-                    });
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let is_narrow = ui.available_width() < 620.0;
+                if is_narrow {
+                    ui.label(
+                        RichText::new(status_title)
+                            .font(semibold_font(ctx, 19.5))
+                            .color(pal.ink),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(status_detail)
+                            .font(FontId::proportional(13.2))
+                            .color(pal.muted),
+                    );
+                    ui.add_space(10.0);
+                    ui.horizontal_wrapped(|ui| {
                         if remotes_count == 0 {
                             if primary_button(
                                 ui,
@@ -243,11 +290,13 @@ pub fn render_backups_view(
                                 wizard.open_connect_cloud(WizardProvider::GoogleDrive);
                             }
                         } else {
-                            if is_running
-                                && danger_button(ui, pal, Some(Icon::Stop), "Stop").clicked()
-                            {
-                                worker.send(UiCommand::CancelActiveBackup);
-                            }
+                            ui.add_enabled_ui(!jobs.is_empty() && !is_running, |ui| {
+                                if primary_button(ui, pal, Some(Icon::Upload), "Back up all")
+                                    .clicked()
+                                {
+                                    worker.send(UiCommand::RunAllBackups { preview: false });
+                                }
+                            });
 
                             let pause_lbl = if backups_paused { "Resume" } else { "Pause" };
                             let pause_ic = if backups_paused {
@@ -261,16 +310,72 @@ pub fn render_backups_view(
                                 });
                             }
 
-                            ui.add_enabled_ui(!jobs.is_empty() && !is_running, |ui| {
-                                if primary_button(ui, pal, Some(Icon::Upload), "Back up all")
-                                    .clicked()
-                                {
-                                    worker.send(UiCommand::RunAllBackups { preview: false });
-                                }
-                            });
+                            if is_running
+                                && danger_button(ui, pal, Some(Icon::Stop), "Stop").clicked()
+                            {
+                                worker.send(UiCommand::CancelActiveBackup);
+                            }
                         }
                     });
-                });
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.set_max_width((ui.available_width() - 260.0).max(260.0));
+                            ui.label(
+                                RichText::new(status_title)
+                                    .font(semibold_font(ctx, 19.5))
+                                    .color(pal.ink),
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(status_detail)
+                                    .font(FontId::proportional(13.2))
+                                    .color(pal.muted),
+                            );
+                        });
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if remotes_count == 0 {
+                                if primary_button(
+                                    ui,
+                                    pal,
+                                    Some(Icon::Plus),
+                                    "Connect a cloud",
+                                )
+                                .clicked()
+                                {
+                                    wizard.open_connect_cloud(WizardProvider::GoogleDrive);
+                                }
+                            } else {
+                                if is_running
+                                    && danger_button(ui, pal, Some(Icon::Stop), "Stop").clicked()
+                                {
+                                    worker.send(UiCommand::CancelActiveBackup);
+                                }
+
+                                let pause_lbl = if backups_paused { "Resume" } else { "Pause" };
+                                let pause_ic = if backups_paused {
+                                    Icon::Play
+                                } else {
+                                    Icon::Pause
+                                };
+                                if secondary_button(ui, pal, Some(pause_ic), pause_lbl).clicked() {
+                                    worker.send(UiCommand::SetBackupsPaused {
+                                        paused: !backups_paused,
+                                    });
+                                }
+
+                                ui.add_enabled_ui(!jobs.is_empty() && !is_running, |ui| {
+                                    if primary_button(ui, pal, Some(Icon::Upload), "Back up all")
+                                        .clicked()
+                                    {
+                                        worker.send(UiCommand::RunAllBackups { preview: false });
+                                    }
+                                });
+                            }
+                        });
+                    });
+                }
 
                 ui.add_space(12.0);
                 progress_bar_clean(ui, pal, progress_val, 5.0);
@@ -367,6 +472,11 @@ pub fn render_backups_view(
                     .and_then(|id| jobs.iter().find(|j| j.id == id))
                 {
                     let sel_clone = sel_job.clone();
+                    let any_running = active_activity.is_some()
+                        || snap.backup_request_inflight
+                        || jobs
+                            .iter()
+                            .any(|j| j.status.to_ascii_lowercase().contains("backing up"));
                     ui.add_space(4.0);
                     sub_card_frame(pal).show(ui, |ui| {
                         ui.horizontal_wrapped(|ui| {
@@ -377,18 +487,34 @@ pub fn render_backups_view(
                             );
                             ui.add_space(6.0);
 
-                            if primary_button(ui, pal, Some(Icon::Upload), "Back up").clicked() {
-                                worker.send(UiCommand::RunBackupJob {
-                                    id: sel_clone.id.clone(),
-                                    preview: false,
-                                });
+                            ui.add_enabled_ui(!any_running, |ui| {
+                                let run_lbl = if any_running {
+                                    "Backing up..."
+                                } else {
+                                    "Back up"
+                                };
+                                if primary_button(ui, pal, Some(Icon::Upload), run_lbl).clicked() {
+                                    worker.send(UiCommand::RunBackupJob {
+                                        id: sel_clone.id.clone(),
+                                        preview: false,
+                                    });
+                                }
+                            });
+                            if any_running
+                                && danger_button(ui, pal, Some(Icon::Stop), "Stop").clicked()
+                            {
+                                worker.send(UiCommand::CancelActiveBackup);
                             }
-                            if secondary_button(ui, pal, Some(Icon::Search), "Preview").clicked() {
-                                worker.send(UiCommand::RunBackupJob {
-                                    id: sel_clone.id.clone(),
-                                    preview: true,
-                                });
-                            }
+                            ui.add_enabled_ui(!any_running, |ui| {
+                                if secondary_button(ui, pal, Some(Icon::Search), "Preview")
+                                    .clicked()
+                                {
+                                    worker.send(UiCommand::RunBackupJob {
+                                        id: sel_clone.id.clone(),
+                                        preview: true,
+                                    });
+                                }
+                            });
                             if secondary_button(ui, pal, Some(Icon::Download), "Restore...")
                                 .clicked()
                             {
@@ -425,25 +551,58 @@ pub fn render_backups_view(
             // Recent Restore Banner if user just restored a snapshot
             if let Some((ref folder, files, bytes)) = snap.last_restored_folder {
                 ui.add_space(12.0);
+                let restore_summary = format!(
+                    "{files} {} ({}) decrypted into {folder}",
+                    if files == 1 { "file" } else { "files" },
+                    format_bytes_human(bytes),
+                );
                 egui::Frame::none()
                     .fill(pal.ok_bg)
                     .stroke(Stroke::new(1.0, pal.ok_fg.gamma_multiply(0.35)))
-                    .rounding(Rounding::same(10.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(16.0, 12.0))
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            status_pill(ui, pal, Some(Icon::Check), "Restored", PillTone::Ok);
-                            ui.label(
-                                RichText::new(format!(
-                                    "{files} file(s) ({}) decrypted into {folder}",
-                                    format_bytes_human(bytes)
-                                ))
-                                .font(semibold_font(ctx, 13.0))
-                                .color(pal.ink),
-                            );
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
+                        let is_narrow = ui.available_width() < 620.0;
+                        if is_narrow {
+                            ui.horizontal(|ui| {
+                                status_pill(ui, pal, Some(Icon::Check), "Restored", PillTone::Ok);
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if icon_button(ui, pal, Icon::Close, "Dismiss").clicked() {
+                                            worker.state.lock().last_restored_folder = None;
+                                        }
+                                    },
+                                );
+                            });
+                            ui.add_space(6.0);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&restore_summary)
+                                        .font(semibold_font(ctx, 13.0))
+                                        .color(pal.ink),
+                                )
+                                .wrap(),
+                            )
+                            .on_hover_text(&restore_summary);
+                            ui.add_space(8.0);
+                            if secondary_button(
+                                ui,
+                                pal,
+                                Some(Icon::FolderOpen),
+                                "Open Restored Folder",
+                            )
+                            .clicked()
+                            {
+                                let _ = open_in_os_default_app(Path::new(folder));
+                            }
+                        } else {
+                            input_row_with_right_widget(
+                                ui,
                                 |ui| {
+                                    if icon_button(ui, pal, Icon::Close, "Dismiss").clicked() {
+                                        worker.state.lock().last_restored_folder = None;
+                                    }
                                     if secondary_button(
                                         ui,
                                         pal,
@@ -455,8 +614,27 @@ pub fn render_backups_view(
                                         let _ = open_in_os_default_app(Path::new(folder));
                                     }
                                 },
+                                |ui, rem_w| {
+                                    ui.set_max_width(rem_w);
+                                    status_pill(
+                                        ui,
+                                        pal,
+                                        Some(Icon::Check),
+                                        "Restored",
+                                        PillTone::Ok,
+                                    );
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(&restore_summary)
+                                                .font(semibold_font(ctx, 13.0))
+                                                .color(pal.ink),
+                                        )
+                                        .truncate(),
+                                    )
+                                    .on_hover_text(&restore_summary);
+                                },
                             );
-                        });
+                        }
                     });
             }
 
@@ -483,12 +661,24 @@ fn render_job_card(
     }
 
     if ui.is_rect_visible(rect) {
+        let hover_t = ctx.animate_bool_with_time(
+            ui.id().with(("job_card_hover", &job.id)),
+            resp.hovered() && !selected,
+            0.12,
+        );
         let (bg, border, bw) = if selected {
             (pal.card_bg, pal.primary_btn, 1.8)
-        } else if resp.hovered() {
-            (pal.card_sub_bg, pal.secondary_btn_border, 1.2)
         } else {
-            (pal.card_bg, pal.card_border, 1.0)
+            let bg = Color32::from(egui::lerp(
+                Rgba::from(pal.card_bg)..=Rgba::from(pal.card_sub_bg),
+                hover_t,
+            ));
+            let border = Color32::from(egui::lerp(
+                Rgba::from(pal.card_border)..=Rgba::from(pal.secondary_btn_border),
+                hover_t,
+            ));
+            let bw = egui::lerp(1.0..=1.2, hover_t);
+            (bg, border, bw)
         };
         ui.painter().rect_filled(rect, Rounding::same(12.0), bg);
         ui.painter()
@@ -511,58 +701,83 @@ fn render_job_card(
 
         let left_inner = Rect::from_min_max(
             Pos2::new(rect.left() + 50.0, rect.top() + 14.0),
-            Pos2::new(rect.right() - 210.0, rect.bottom() - 12.0),
+            Pos2::new((rect.right() - 210.0).max(rect.left() + 120.0), rect.bottom() - 12.0),
         );
         let mut left_ui = ui.new_child(egui::UiBuilder::new().max_rect(left_inner));
+        left_ui.set_clip_rect(left_inner.intersect(ui.clip_rect()));
         left_ui.spacing_mut().item_spacing.y = 3.0;
-        left_ui.label(
-            RichText::new(&job.name)
-                .font(semibold_font(ctx, 16.5))
-                .color(pal.ink),
+        left_ui.add(
+            egui::Label::new(
+                RichText::new(&job.name)
+                    .font(semibold_font(ctx, 16.5))
+                    .color(pal.ink),
+            )
+            .truncate(),
         );
-        left_ui.label(
-            RichText::new(&job.source_path)
-                .font(FontId::proportional(12.3))
-                .color(pal.muted),
-        );
+        left_ui
+            .add(
+                egui::Label::new(
+                    RichText::new(&job.source_path)
+                        .font(FontId::proportional(12.3))
+                        .color(pal.muted),
+                )
+                .truncate(),
+            )
+            .on_hover_text(&job.source_path);
         let sched = if !job.enabled || job.interval_minutes == 0 {
-            format!("Manual backup only  |  Vault: {}", job.vault_folder)
+            format!("Manual backup only  •  Vault: {}", job.vault_folder)
         } else if job.interval_minutes.is_multiple_of(60) && job.interval_minutes >= 60 {
             let hrs = job.interval_minutes / 60;
             if hrs == 1 {
-                format!("Every hour  |  Vault: {}", job.vault_folder)
+                format!("Every hour  •  Vault: {}", job.vault_folder)
             } else {
-                format!("Every {hrs} hours  |  Vault: {}", job.vault_folder)
+                format!("Every {hrs} hours  •  Vault: {}", job.vault_folder)
             }
+        } else if job.interval_minutes == 1 {
+            format!("Every minute  •  Vault: {}", job.vault_folder)
         } else {
             format!(
-                "Every {} minutes  |  Vault: {}",
+                "Every {} minutes  •  Vault: {}",
                 job.interval_minutes, job.vault_folder
             )
         };
-        left_ui.label(
-            RichText::new(sched)
-                .font(FontId::proportional(11.6))
-                .color(pal.muted),
-        );
-        if let Some(ref err) = job.last_error.as_deref().filter(|s| !s.is_empty()) {
-            left_ui.label(
-                RichText::new(format!("Attention: {err}"))
-                    .font(FontId::proportional(11.6))
-                    .color(pal.danger_fg),
-            );
+        left_ui
+            .add(
+                egui::Label::new(
+                    RichText::new(&sched)
+                        .font(FontId::proportional(11.6))
+                        .color(pal.muted),
+                )
+                .truncate(),
+            )
+            .on_hover_text(&sched);
+        if let Some(err) = job.last_error.as_deref().filter(|s| !s.is_empty()) {
+            let err_line = format!("Attention: {err}");
+            left_ui
+                .add(
+                    egui::Label::new(
+                        RichText::new(&err_line)
+                            .font(FontId::proportional(11.6))
+                            .color(pal.danger_fg),
+                    )
+                    .truncate(),
+                )
+                .on_hover_text(err);
         }
 
         // Right column: Status pill + Last backup timestamp
+        let right_min_x = (rect.right() - 205.0).max(left_inner.max.x + 6.0);
+        let right_max_x = (rect.right() - 18.0).max(right_min_x);
         let right_inner = Rect::from_min_max(
-            Pos2::new(rect.right() - 205.0, rect.top() + 14.0),
-            Pos2::new(rect.right() - 18.0, rect.bottom() - 12.0),
+            Pos2::new(right_min_x, rect.top() + 14.0),
+            Pos2::new(right_max_x, rect.bottom() - 12.0),
         );
         let mut right_ui = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(right_inner)
                 .layout(egui::Layout::top_down(egui::Align::Max)),
         );
+        right_ui.set_clip_rect(right_inner.intersect(ui.clip_rect()));
         right_ui.spacing_mut().item_spacing.y = 4.0;
         let st_lower = job.status.to_ascii_lowercase();
         let (tone, ic) = if st_lower.contains("attention") || st_lower.contains("error") {
@@ -586,9 +801,14 @@ fn render_job_card(
                 .color(pal.muted),
         );
         if job.last_files_synced > 0 || job.last_bytes_synced > 0 {
+            let file_word = if job.last_files_synced == 1 {
+                "file"
+            } else {
+                "files"
+            };
             right_ui.label(
                 RichText::new(format!(
-                    "{} files ({})",
+                    "{} {file_word} ({})",
                     job.last_files_synced,
                     format_bytes_human(job.last_bytes_synced)
                 ))
@@ -618,15 +838,18 @@ fn render_backup_job_modal(
         "Add a Folder to Back Up"
     };
 
-    egui::Window::new(title)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .default_width(520.0)
-        .show(ctx, |ui| {
+    let mut close_req = false;
+    modal_dialog(
+        ctx,
+        pal,
+        "ec_backup_job_modal",
+        title,
+        540.0,
+        &mut close_req,
+        |ui| {
             ui.label(
                 RichText::new("Choose what matters")
-                    .font(semibold_font(ctx, 20.0))
+                    .font(semibold_font(ctx, 17.5))
                     .color(pal.ink),
             );
             ui.label(
@@ -639,40 +862,51 @@ fn render_backup_job_modal(
             ui.add_space(12.0);
 
             form_label(ui, pal, "Local folder on this PC");
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut modal.source_path)
-                        .desired_width(ui.available_width() - 148.0)
-                        .hint_text("e.g. C:\\Users\\You\\Documents"),
-                );
-                if secondary_button(ui, pal, Some(Icon::FolderOpen), "Browse folders...").clicked()
-                {
-                    dialogs.pick_folder(
-                        ctx,
-                        "Choose a folder to back up",
-                        None,
-                        DialogPurpose::BackupJobSourceFolder,
-                    );
-                }
-            });
+            let mut src_changed = false;
+            input_row_with_right_widget(
+                ui,
+                |ui| {
+                    if secondary_button(ui, pal, Some(Icon::FolderOpen), "Browse folders...")
+                        .clicked()
+                    {
+                        dialogs.pick_folder(
+                            ctx,
+                            "Choose a folder to back up",
+                            None,
+                            DialogPurpose::BackupJobSourceFolder,
+                        );
+                    }
+                },
+                |ui, _rem_w| {
+                    let src_hint = if cfg!(target_os = "windows") {
+                        "e.g. C:\\Users\\You\\Documents"
+                    } else {
+                        "e.g. /home/you/Documents"
+                    };
+                    if ui
+                        .add(text_input_single(&mut modal.source_path, src_hint))
+                        .changed()
+                    {
+                        src_changed = true;
+                    }
+                },
+            );
+            if src_changed {
+                modal.sync_derived_from_source_path();
+            }
 
-            ui.add_space(8.0);
+            ui.add_space(10.0);
             ui.columns(2, |cols| {
                 form_label(&mut cols[0], pal, "Backup name");
-                cols[0].add(
-                    egui::TextEdit::singleline(&mut modal.name)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("Documents"),
-                );
+                cols[0].add(text_input_single(&mut modal.name, "Documents"));
                 form_label(&mut cols[1], pal, "Destination in vault");
-                cols[1].add(
-                    egui::TextEdit::singleline(&mut modal.vault_folder)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("/Backups/Documents"),
-                );
+                cols[1].add(text_input_single(
+                    &mut modal.vault_folder,
+                    "/Backups/Documents",
+                ));
             });
 
-            ui.add_space(8.0);
+            ui.add_space(10.0);
             form_label(ui, pal, "Schedule");
             ui.horizontal_wrapped(|ui| {
                 for (mins, lbl) in [
@@ -689,33 +923,50 @@ fn render_backup_job_modal(
                         modal.enabled = mins != 0;
                     }
                 }
-                ui.add(
-                    egui::TextEdit::singleline(&mut modal.custom_minutes)
-                        .desired_width(64.0)
-                        .hint_text("Minutes"),
-                );
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut modal.custom_minutes)
+                            .margin(Margin::symmetric(8.0, 5.5))
+                            .desired_width(68.0)
+                            .hint_text("Min"),
+                    )
+                    .changed()
+                    && let Ok(parsed) = modal.custom_minutes.trim().parse::<u32>()
+                {
+                    modal.interval_minutes = parsed;
+                    modal.enabled = parsed != 0;
+                }
             });
 
-            ui.add_space(8.0);
+            ui.add_space(10.0);
             form_label(ui, pal, "Ignore temporary files (one pattern per line)");
             ui.add(
                 egui::TextEdit::multiline(&mut modal.excludes_text)
+                    .margin(Margin::symmetric(10.0, 8.0))
                     .desired_rows(3)
                     .desired_width(f32::INFINITY),
             );
 
-            ui.add_space(6.0);
-            ui.checkbox(
-                &mut modal.enabled,
-                "Back up automatically while EntroCloud is unlocked",
-            );
+            ui.add_space(8.0);
+            if ui
+                .checkbox(
+                    &mut modal.enabled,
+                    "Back up automatically while EntroCloud is unlocked",
+                )
+                .changed()
+                && modal.enabled
+                && modal.interval_minutes == 0
+            {
+                modal.interval_minutes = 15;
+                modal.custom_minutes = "15".to_owned();
+            }
 
             if let Some(ref err) = modal.error {
                 ui.add_space(6.0);
                 ui.label(RichText::new(err).color(pal.danger_fg));
             }
 
-            ui.add_space(12.0);
+            ui.add_space(14.0);
             ui.horizontal(|ui| {
                 if secondary_button(ui, pal, None, "Cancel").clicked() {
                     modal.open = false;
@@ -729,40 +980,49 @@ fn render_backup_job_modal(
                         } else {
                             modal.vault_folder.trim().to_owned()
                         };
-                        let mins = modal
-                            .custom_minutes
-                            .trim()
-                            .parse::<u32>()
-                            .unwrap_or(modal.interval_minutes);
                         if name.is_empty() || src.is_empty() {
                             modal.error = Some(
                                 "Choose a local folder and enter a backup name.".to_owned(),
                             );
                         } else {
-                            let excludes: Vec<String> = modal
-                                .excludes_text
-                                .lines()
-                                .map(str::trim)
-                                .filter(|s| !s.is_empty())
-                                .map(str::to_owned)
-                                .collect();
-                            worker.send(UiCommand::UpsertBackupJob {
-                                spec: Box::new(BackupJobSpec {
-                                    id: modal.editing_id.clone(),
-                                    name,
-                                    source_path: src,
-                                    vault_folder: vdest,
-                                    interval_minutes: mins,
-                                    enabled: modal.enabled,
-                                    excludes,
-                                }),
-                            });
-                            modal.open = false;
+                            match modal.custom_minutes.trim().parse::<u32>() {
+                                Ok(mins) => {
+                                    modal.error = None;
+                                    let excludes: Vec<String> = modal
+                                        .excludes_text
+                                        .lines()
+                                        .map(str::trim)
+                                        .filter(|s| !s.is_empty())
+                                        .map(str::to_owned)
+                                        .collect();
+                                    worker.send(UiCommand::UpsertBackupJob {
+                                        spec: Box::new(BackupJobSpec {
+                                            id: modal.editing_id.clone(),
+                                            name,
+                                            source_path: src,
+                                            vault_folder: vdest,
+                                            interval_minutes: mins,
+                                            enabled: modal.enabled,
+                                            excludes,
+                                        }),
+                                    });
+                                    modal.open = false;
+                                }
+                                Err(_) => {
+                                    modal.error = Some(
+                                        "Enter a valid number of minutes (0 for manual).".into(),
+                                    );
+                                }
+                            }
                         }
                     }
                 });
             });
-        });
+        },
+    );
+    if close_req {
+        modal.open = false;
+    }
 }
 
 fn render_restore_modal(
@@ -776,15 +1036,18 @@ fn render_restore_modal(
         return;
     }
 
-    egui::Window::new("Restore Encrypted Backup")
-        .collapsible(false)
-        .resizable(false)
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .default_width(480.0)
-        .show(ctx, |ui| {
+    let mut close_req = false;
+    modal_dialog(
+        ctx,
+        pal,
+        "ec_restore_backup_modal",
+        "Restore Encrypted Backup",
+        500.0,
+        &mut close_req,
+        |ui| {
             ui.label(
                 RichText::new(format!("Restore '{}'", modal.job_name))
-                    .font(semibold_font(ctx, 18.0))
+                    .font(semibold_font(ctx, 17.0))
                     .color(pal.ink),
             );
             ui.label(
@@ -797,24 +1060,32 @@ fn render_restore_modal(
             ui.add_space(12.0);
 
             form_label(ui, pal, "Restore into parent folder on this PC");
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut modal.destination_parent)
-                        .desired_width(ui.available_width() - 148.0),
-                );
-                if secondary_button(ui, pal, Some(Icon::FolderOpen), "Choose folder...").clicked()
-                {
-                    dialogs.pick_folder(
-                        ctx,
-                        "Choose destination folder for restored backup",
-                        None,
-                        DialogPurpose::RestoreDestinationParent {
-                            job_id: modal.job_id.clone(),
-                            job_name: modal.job_name.clone(),
-                        },
-                    );
-                }
-            });
+            input_row_with_right_widget(
+                ui,
+                |ui| {
+                    if secondary_button(ui, pal, Some(Icon::FolderOpen), "Choose folder...")
+                        .clicked()
+                    {
+                        dialogs.pick_folder(
+                            ctx,
+                            "Choose destination folder for restored backup",
+                            None,
+                            DialogPurpose::RestoreDestinationParent {
+                                job_id: modal.job_id.clone(),
+                                job_name: modal.job_name.clone(),
+                            },
+                        );
+                    }
+                },
+                |ui, _rem_w| {
+                    let restore_hint = if cfg!(target_os = "windows") {
+                        "e.g. C:\\Users\\You\\Desktop"
+                    } else {
+                        "e.g. /home/you/Desktop"
+                    };
+                    ui.add(text_input_single(&mut modal.destination_parent, restore_hint));
+                },
+            );
 
             if let Some(ref err) = modal.error {
                 ui.add_space(6.0);
@@ -848,7 +1119,11 @@ fn render_restore_modal(
                     }
                 });
             });
-        });
+        },
+    );
+    if close_req {
+        modal.open = false;
+    }
 }
 
 fn render_remove_job_modal(
@@ -861,12 +1136,15 @@ fn render_remove_job_modal(
         return;
     };
 
-    egui::Window::new("Remove Backup Schedule")
-        .collapsible(false)
-        .resizable(false)
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .default_width(420.0)
-        .show(ctx, |ui| {
+    let mut close_req = false;
+    modal_dialog(
+        ctx,
+        pal,
+        "ec_remove_backup_modal",
+        "Remove Backup Schedule",
+        440.0,
+        &mut close_req,
+        |ui| {
             ui.label(
                 RichText::new(format!("Stop automatic backup for '{job_name}'?"))
                     .font(semibold_font(ctx, 16.5))
@@ -892,5 +1170,28 @@ fn render_remove_job_modal(
                     }
                 });
             });
-        });
+        },
+    );
+    if close_req {
+        *target = None;
+    }
+}
+
+/// Parses `(done/total` progress strings (such as `"Backing up Docs (142/640 files)…"`) into `0.04..=0.99`.
+fn parse_activity_progress_fraction(activity: &str) -> Option<f32> {
+    let open_paren = activity.rfind('(')?;
+    let inside = &activity[open_paren + 1..];
+    let slash = inside.find('/')?;
+    let done_str = inside[..slash].trim();
+    let rest = &inside[slash + 1..];
+    let total_end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    let total_str = rest[..total_end].trim();
+    let done: u64 = done_str.parse().ok()?;
+    let total: u64 = total_str.parse().ok()?;
+    if total == 0 {
+        return Some(1.0);
+    }
+    Some(((done as f32) / (total as f32)).clamp(0.04, 0.99))
 }

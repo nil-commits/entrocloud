@@ -13,16 +13,10 @@ RestartSec=3s
 Environment=RUST_LOG=info
 UMask=0077
 
-# Privilege & filesystem sandboxing (allows spawning on-demand entrocloud UI)
-MemoryMax=256M
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=%h/.local/share/entrocloud %h/.config/entrocloud %h/EntroCloud %t
-RestrictSUIDSGID=true
+# Process hardening
+# Note: MemoryDenyWriteExecute is intentionally omitted because spawning the
+# on-demand GPU UI (entrocloud) requires Mesa/OpenGL shader JIT mappings.
 LockPersonality=true
-MemoryDenyWriteExecute=true
 
 [Install]
 WantedBy=graphical-session.target

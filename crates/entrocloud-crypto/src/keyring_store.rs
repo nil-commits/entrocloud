@@ -28,6 +28,16 @@ impl OsKeyringSecretStore {
 }
 
 fn map_keyring_err(err: KeyringError) -> ZeroVaultError {
+    #[cfg(target_os = "linux")]
+    if matches!(
+        err,
+        KeyringError::NoStorageAccess(_) | KeyringError::PlatformFailure(_)
+    ) {
+        return ZeroVaultError::KeyringError(format!(
+            "{err} (on Linux, ensure a Secret Service daemon such as gnome-keyring-daemon or KWallet is running with DBUS_SESSION_BUS_ADDRESS set, or unlock with your passphrase without keyring auto-unlock)"
+        ));
+    }
+
     ZeroVaultError::KeyringError(err.to_string())
 }
 

@@ -6,8 +6,8 @@ use eframe::egui::{self, FontId, RichText, Sense, Vec2};
 use crate::icons::{Icon, paint_icon};
 use crate::theme::{
     Palette, PillTone, ThemePreference, UiPrefs, card_frame, danger_button, form_label,
-    primary_button, progress_bar_clean, secondary_button, semibold_font,
-    set_os_autostart_enabled, small_button, status_pill, sub_card_frame,
+    primary_button, progress_bar_clean, secondary_button, segmented_control, semibold_font,
+    set_os_autostart_enabled, status_pill, sub_card_frame,
 };
 use crate::views::FrameSnapshot;
 use crate::wizard::{WizardState, WizardStep};
@@ -41,20 +41,18 @@ pub fn render_settings_cards(
         ui.add_space(10.0);
 
         form_label(ui, pal, "Color Theme");
-        ui.horizontal_wrapped(|ui| {
-            for (mode, ic, lbl) in [
-                (ThemePreference::Light, Some(Icon::Sun), "Light"),
-                (ThemePreference::Dark, Some(Icon::Moon), "Dark"),
-                (ThemePreference::System, None, "System"),
-            ] {
-                if small_button(ui, pal, ic, lbl, prefs.theme == mode).clicked()
-                    && prefs.theme != mode
-                {
-                    prefs.theme = mode;
-                    *prefs_dirty = true;
-                }
-            }
-        });
+        if segmented_control(
+            ui,
+            pal,
+            &mut prefs.theme,
+            &[
+                (ThemePreference::Light, "Light"),
+                (ThemePreference::Dark, "Dark"),
+                (ThemePreference::System, "System"),
+            ],
+        ) {
+            *prefs_dirty = true;
+        }
 
         ui.add_space(10.0);
         let mut autostart = prefs.start_with_os;
@@ -62,9 +60,17 @@ pub fn render_settings_cards(
             .checkbox(&mut autostart, "Start EntroCloud when I sign in")
             .changed()
         {
-            prefs.start_with_os = autostart;
-            *prefs_dirty = true;
-            let _ = set_os_autostart_enabled(autostart);
+            match set_os_autostart_enabled(autostart) {
+                Ok(()) => {
+                    prefs.start_with_os = autostart;
+                    *prefs_dirty = true;
+                }
+                Err(e) => {
+                    let mut guard = worker.state.lock();
+                    guard.toast_error = Some(e);
+                    guard.notify_repaint();
+                }
+            }
         }
         ui.label(
             RichText::new(
@@ -115,11 +121,16 @@ pub fn render_settings_cards(
         if snap.active_preview_files > 0 {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
+                let preview_word = if snap.active_preview_files == 1 {
+                    "file"
+                } else {
+                    "files"
+                };
                 status_pill(
                     ui,
                     pal,
                     None,
-                    &format!("{} temporary preview file(s)", snap.active_preview_files),
+                    &format!("{} temporary preview {preview_word}", snap.active_preview_files),
                     PillTone::Warn,
                 );
                 if secondary_button(ui, pal, Some(Icon::Trash), "Wipe Previews Now").clicked() {
@@ -133,6 +144,7 @@ pub fn render_settings_cards(
 
     // 3. Test Encryption Speed Card
     card_frame(pal).show(ui, |ui| {
+        let is_busy = snap.busy_task.is_some();
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new("Test Encryption Speed")
@@ -140,18 +152,14 @@ pub fn render_settings_cards(
                     .color(pal.ink),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if primary_button(
-                    ui,
-                    pal,
-                    Some(Icon::Sparkles),
-                    "Test Speed",
-                )
-                .clicked()
-                {
-                    worker.send(UiCommand::RunCryptoBench {
-                        total_mib: *bench_mib,
-                    });
-                }
+                ui.add_enabled_ui(!is_busy, |ui| {
+                    let lbl = if is_busy { "Testing…" } else { "Test Speed" };
+                    if primary_button(ui, pal, Some(Icon::Sparkles), lbl).clicked() {
+                        worker.send(UiCommand::RunCryptoBench {
+                            total_mib: *bench_mib,
+                        });
+                    }
+                });
             });
         });
         ui.add_space(4.0);
@@ -164,13 +172,14 @@ pub fn render_settings_cards(
         );
 
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("Sample size:").color(pal.muted).size(12.2));
-            for sz in [64usize, 128, 256] {
-                if small_button(ui, pal, None, &format!("{sz} MB"), *bench_mib == sz).clicked() {
-                    *bench_mib = sz;
-                }
-            }
+            segmented_control(
+                ui,
+                pal,
+                bench_mib,
+                &[(64usize, "64 MB"), (128, "128 MB"), (256, "256 MB")],
+            );
         });
 
         if let Some(ref rep) = snap.crypto_bench {
@@ -189,7 +198,7 @@ pub fn render_settings_cards(
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             RichText::new(format!("{:.2} GB/s", rep.encrypt_mib_per_sec / 1024.0))
-                                .font(semibold_font(ctx, 13.0))
+                                .font(FontId::monospace(13.0))
                                 .color(pal.primary_btn),
                         );
                     });
@@ -206,7 +215,7 @@ pub fn render_settings_cards(
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             RichText::new(format!("{:.2} GB/s", rep.decrypt_mib_per_sec / 1024.0))
-                                .font(semibold_font(ctx, 13.0))
+                                .font(FontId::monospace(13.0))
                                 .color(pal.ok_fg),
                         );
                     });
@@ -256,27 +265,48 @@ pub fn render_settings_cards(
 
     // 4. Conflicted File Copies Card
     card_frame(pal).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.label(
-                    RichText::new("Conflicted File Copies")
-                        .font(semibold_font(ctx, 18.0))
-                        .color(pal.ink),
-                );
-                ui.label(
-                    RichText::new(
-                        "If a file is edited on two devices at once, EntroCloud keeps both copies safe so nothing is lost.",
-                    )
-                    .font(FontId::proportional(12.4))
-                    .color(pal.muted),
-                );
+        let is_narrow = ui.available_width() < 480.0;
+        if is_narrow {
+            ui.label(
+                RichText::new("Conflicted File Copies")
+                    .font(semibold_font(ctx, 18.0))
+                    .color(pal.ink),
+            );
+            ui.label(
+                RichText::new(
+                    "If a file is edited on two devices at once, EntroCloud keeps both copies safe so nothing is lost.",
+                )
+                .font(FontId::proportional(12.4))
+                .color(pal.muted),
+            );
+            ui.add_space(8.0);
+            if secondary_button(ui, pal, Some(Icon::Refresh), "Refresh").clicked() {
+                worker.send(UiCommand::RefreshConflicts);
+            }
+        } else {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_max_width((ui.available_width() - 130.0).max(160.0));
+                    ui.label(
+                        RichText::new("Conflicted File Copies")
+                            .font(semibold_font(ctx, 18.0))
+                            .color(pal.ink),
+                    );
+                    ui.label(
+                        RichText::new(
+                            "If a file is edited on two devices at once, EntroCloud keeps both copies safe so nothing is lost.",
+                        )
+                        .font(FontId::proportional(12.4))
+                        .color(pal.muted),
+                    );
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if secondary_button(ui, pal, Some(Icon::Refresh), "Refresh").clicked() {
+                        worker.send(UiCommand::RefreshConflicts);
+                    }
+                });
             });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if secondary_button(ui, pal, Some(Icon::Refresh), "Refresh").clicked() {
-                    worker.send(UiCommand::RefreshConflicts);
-                }
-            });
-        });
+        }
         ui.add_space(10.0);
         if snap.conflicts.is_empty() {
             sub_card_frame(pal).show(ui, |ui| {
@@ -293,7 +323,7 @@ pub fn render_settings_cards(
                 sub_card_frame(pal).show(ui, |ui| {
                     ui.label(
                         RichText::new(format!(
-                            "{}  ->  Preserved as {}",
+                            "{}  →  Preserved as {}",
                             c.original_path, c.conflict_path
                         ))
                         .font(semibold_font(ctx, 12.5))

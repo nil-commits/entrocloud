@@ -634,6 +634,10 @@ async fn buffer_pool_full_capacity_zeroization_and_mimalloc_reclamation() -> Tes
 async fn streaming_9_5_mib_seek_lock_purge_and_orphan_blob_gc() -> TestResult {
     let dir = TempDir::new()?;
     let crypto = Arc::new(MockCryptoEngine::default());
+    let pass = entrocloud_types::RedactedSecret::new("streaming-test-passphrase");
+    let vault_hdr = crypto
+        .init_vault(&pass, entrocloud_types::KdfParams::default())
+        .await?;
     let spy = Arc::new(SpyStorageRouter::new());
     let engine = make_engine(&dir, "node-a", crypto.clone(), spy.clone())?;
 
@@ -729,7 +733,11 @@ async fn streaming_9_5_mib_seek_lock_purge_and_orphan_blob_gc() -> TestResult {
         assert!(all_deleted.contains(k), "expected orphan blob {k} to be GC'd");
     }
 
-    // Stage a new dirty write, then call `lock_and_purge_cache()` -> 0 staged files remain & VaultLocked!
+    // Stage a new dirty write, plus a stray non-dirty temp file and an orphan dirty dir,
+    // then call `lock_and_purge_cache()`:
+    // - RAM LRU & stray/non-dirty staging files MUST be purged
+    // - AEAD-encrypted `.zvpart` for inodes with pending `dirty_ops` MUST be preserved (B1)
+    // - Reading while locked returns `VaultLocked`, and unlocking restores readable & syncable data!
     let temp_rec = engine
         .create_entry(CreateEntrySpec {
             parent_inode: ROOT_INODE,
@@ -742,14 +750,44 @@ async fn streaming_9_5_mib_seek_lock_purge_and_orphan_blob_gc() -> TestResult {
         .await?;
     assert!(engine.cache().has_dirty_chunk(temp_rec.inode, 0).await);
 
+    let stray_tmp = engine.config().staging_dir.join("stray.tmp");
+    std::fs::write(&stray_tmp, b"stray temp data")?;
+    let orphan_inode_dir = engine.config().staging_dir.join("dirty").join("999999");
+    std::fs::create_dir_all(&orphan_inode_dir)?;
+    std::fs::write(orphan_inode_dir.join("0.zvpart"), b"orphan staged bytes")?;
+
     engine.lock_and_purge_cache().await?;
     assert!(!engine.crypto().is_unlocked());
     assert_eq!(engine.cache().used_ram_bytes(), 0);
-    assert!(!engine.config().staging_dir.join("dirty").exists());
+    assert!(!stray_tmp.exists(), "stray temp file must be purged on lock");
+    assert!(
+        !orphan_inode_dir.exists(),
+        "non-dirty orphan staging dir must be purged on lock"
+    );
+    assert!(
+        engine.cache().has_dirty_chunk(temp_rec.inode, 0).await,
+        "AEAD-encrypted dirty .zvpart for pending dirty_ops must survive lock"
+    );
     assert!(matches!(
         engine.read_range(temp_rec.inode, 0, 10).await,
         Err(ZeroVaultError::VaultLocked)
     ));
+
+    // Unlock vault again and verify the staged dirty write survived intact and syncs cleanly!
+    engine
+        .crypto()
+        .unlock_with_passphrase(&vault_hdr, &pass)
+        .await?;
+    assert!(engine.crypto().is_unlocked());
+    let recovered = engine
+        .read_range(temp_rec.inode, 0, b"staged before lock".len())
+        .await?;
+    assert_eq!(recovered.as_ref(), b"staged before lock");
+    engine.sync_once().await?;
+    assert!(
+        !engine.cache().has_dirty_chunk(temp_rec.inode, 0).await,
+        "dirty staging file must be cleared after sync"
+    );
 
     Ok(())
 }

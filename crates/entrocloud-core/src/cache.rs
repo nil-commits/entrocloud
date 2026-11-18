@@ -1,5 +1,6 @@
 //! Strictly byte-bounded LRU decrypted chunk cache and AEAD-encrypted `.zvpart` local disk staging (`NEW-H01`).
 
+use std::collections::HashSet;
 use std::fmt;
 use std::io::SeekFrom;
 use std::num::NonZeroUsize;
@@ -404,6 +405,66 @@ impl ChunkCache {
         self.clear_ram();
         let dirty_root = self.staging_dir.join("dirty");
         secure_wipe_and_remove_dir(&dirty_root).await?;
+
+        // Also zero-wipe and delete any stray temporary files directly under `staging_dir`.
+        if let Ok(mut rd) = fs::read_dir(&self.staging_dir).await {
+            while let Ok(Some(entry)) = rd.next_entry().await {
+                let path = entry.path();
+                if let Ok(ft) = entry.file_type().await
+                    && ft.is_file()
+                {
+                    let _ = secure_wipe_and_remove_file(&path).await;
+                }
+            }
+        }
+        self.inode_locks.clear();
+        Ok(())
+    }
+
+    /// Purges the RAM LRU cache, stray temporary files under `staging_dir`, and any
+    /// `staging_dir/dirty/<inode>` directories whose inode is NOT in `dirty_inodes`.
+    ///
+    /// Preserves AEAD-encrypted `.zvpart` files for inodes with pending `dirty_ops` so
+    /// unsynced local writes survive vault lock/unlock and daemon restarts without data loss.
+    pub async fn purge_preserving_dirty(
+        &self,
+        dirty_inodes: &HashSet<InodeId>,
+    ) -> ZeroVaultResult<()> {
+        self.clear_ram();
+        let dirty_root = self.staging_dir.join("dirty");
+        if dirty_inodes.is_empty() {
+            secure_wipe_and_remove_dir(&dirty_root).await?;
+        } else if let Ok(mut rd) = fs::read_dir(&dirty_root).await {
+            while let Ok(Some(entry)) = rd.next_entry().await {
+                let path = entry.path();
+                let is_dir = entry.file_type().await.is_ok_and(|ft| ft.is_dir());
+                let keep = is_dir
+                    && entry
+                        .file_name()
+                        .to_str()
+                        .and_then(|s| s.parse::<InodeId>().ok())
+                        .is_some_and(|ino| dirty_inodes.contains(&ino));
+                if keep {
+                    // Clean any stray non-.zvpart temp files inside preserved dirty inode dir.
+                    if let Ok(mut sub_rd) = fs::read_dir(&path).await {
+                        while let Ok(Some(sub)) = sub_rd.next_entry().await {
+                            let sub_path = sub.path();
+                            let is_zvpart = sub_path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                == Some("zvpart");
+                            if !is_zvpart && sub.file_type().await.is_ok_and(|ft| ft.is_file()) {
+                                let _ = secure_wipe_and_remove_file(&sub_path).await;
+                            }
+                        }
+                    }
+                } else if is_dir {
+                    secure_wipe_and_remove_dir(&path).await?;
+                } else {
+                    let _ = secure_wipe_and_remove_file(&path).await;
+                }
+            }
+        }
 
         // Also zero-wipe and delete any stray temporary files directly under `staging_dir`.
         if let Ok(mut rd) = fs::read_dir(&self.staging_dir).await {

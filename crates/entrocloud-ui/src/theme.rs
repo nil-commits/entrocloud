@@ -142,39 +142,161 @@ pub fn install_os_fonts(ctx: &egui::Context) {
 
     #[cfg(not(target_os = "windows"))]
     {
-        let regular_candidates = [
-            "/usr/share/fonts/TTF/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        let user_fonts_dir = dirs::data_local_dir()
+            .map(|d| d.join("fonts"))
+            .or_else(|| dirs::home_dir().map(|h| h.join(".local/share/fonts")));
+
+        let load_first = |system_paths: &[&str], user_rel_paths: &[&str]| -> Option<Vec<u8>> {
+            if let Some(ref udir) = user_fonts_dir {
+                for rel in user_rel_paths {
+                    if let Ok(bytes) = std::fs::read(udir.join(rel)) {
+                        return Some(bytes);
+                    }
+                }
+            }
+            for path in system_paths {
+                if let Ok(bytes) = std::fs::read(path) {
+                    return Some(bytes);
+                }
+            }
+            None
+        };
+
+        let regular_user = [
+            "Inter-Regular.ttf",
+            "Inter-Regular.otf",
+            "inter/Inter-Regular.ttf",
+            "SF-Pro-Text-Regular.otf",
+            "SFProText-Regular.ttf",
+            "NotoSans-Regular.ttf",
+        ];
+        let regular_system = [
+            // Inter (Ubuntu, Arch, Fedora)
+            "/usr/share/fonts/inter/Inter-Regular.ttf",
+            "/usr/share/fonts/inter/Inter-Regular.otf",
+            "/usr/share/fonts/TTF/Inter-Regular.ttf",
+            "/usr/share/fonts/OTF/Inter-Regular.otf",
+            "/usr/share/fonts/truetype/inter/Inter-Regular.ttf",
+            "/usr/share/fonts/opentype/inter/Inter-Regular.otf",
+            "/usr/share/fonts/inter-fonts/Inter-Regular.ttf",
+            // Cantarell / Adwaita Sans (GNOME / Fedora / Arch)
+            "/usr/share/fonts/cantarell/Cantarell-Regular.otf",
+            "/usr/share/fonts/opentype/cantarell/Cantarell-Regular.otf",
+            "/usr/share/fonts/abattis-cantarell-fonts/Cantarell-Regular.otf",
+            "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-Regular.ttf",
+            "/usr/share/fonts/TTF/AdwaitaSans-Regular.ttf",
+            // Ubuntu Sans (Ubuntu)
+            "/usr/share/fonts/truetype/ubuntu/UbuntuSans-Regular.ttf",
+            "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+            "/usr/share/fonts/ubuntu/Ubuntu-R.ttf",
+            // Noto Sans (KDE Plasma / Arch / Fedora / Ubuntu)
             "/usr/share/fonts/noto/NotoSans-Regular.ttf",
             "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-            "/usr/share/fonts/cantarell/Cantarell-Regular.otf",
+            "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/google-noto-vf/NotoSans[wght].ttf",
+            // Liberation Sans & DejaVu Sans (universal Linux fallbacks)
+            "/usr/share/fonts/TTF/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
         ];
-        for path in regular_candidates {
-            if let Ok(bytes) = std::fs::read(path) {
-                fonts
-                    .font_data
-                    .insert("os_regular".to_owned(), FontData::from_owned(bytes));
-                if let Some(fam) = fonts.families.get_mut(&FontFamily::Proportional) {
-                    fam.insert(0, "os_regular".to_owned());
-                }
-                proportional_loaded = true;
-                break;
+        if let Some(bytes) = load_first(&regular_system, &regular_user) {
+            fonts
+                .font_data
+                .insert("os_regular".to_owned(), FontData::from_owned(bytes));
+            if let Some(fam) = fonts.families.get_mut(&FontFamily::Proportional) {
+                fam.insert(0, "os_regular".to_owned());
             }
+            proportional_loaded = true;
         }
 
-        let semibold_candidates = [
+        let semibold_user = [
+            "Inter-SemiBold.ttf",
+            "Inter-SemiBold.otf",
+            "Inter-Medium.ttf",
+            "inter/Inter-SemiBold.ttf",
+            "SF-Pro-Text-Semibold.otf",
+            "SFProText-Semibold.ttf",
+            "NotoSans-SemiBold.ttf",
+        ];
+        let semibold_system = [
+            // Inter SemiBold / Medium
+            "/usr/share/fonts/inter/Inter-SemiBold.ttf",
+            "/usr/share/fonts/inter/Inter-SemiBold.otf",
+            "/usr/share/fonts/inter/Inter-Medium.ttf",
+            "/usr/share/fonts/TTF/Inter-SemiBold.ttf",
+            "/usr/share/fonts/OTF/Inter-SemiBold.otf",
+            "/usr/share/fonts/truetype/inter/Inter-SemiBold.ttf",
+            "/usr/share/fonts/opentype/inter/Inter-SemiBold.otf",
+            "/usr/share/fonts/inter-fonts/Inter-SemiBold.ttf",
+            // Cantarell / Adwaita Sans
+            "/usr/share/fonts/cantarell/Cantarell-Bold.otf",
+            "/usr/share/fonts/opentype/cantarell/Cantarell-Bold.otf",
+            "/usr/share/fonts/abattis-cantarell-fonts/Cantarell-Bold.otf",
+            "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-SemiBold.ttf",
+            "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-Bold.ttf",
+            // Ubuntu Medium / Bold
+            "/usr/share/fonts/truetype/ubuntu/UbuntuSans-SemiBold.ttf",
+            "/usr/share/fonts/truetype/ubuntu/UbuntuSans-Medium.ttf",
+            "/usr/share/fonts/truetype/ubuntu/Ubuntu-M.ttf",
+            "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+            "/usr/share/fonts/ubuntu/Ubuntu-M.ttf",
+            // Noto Sans SemiBold / Medium / Bold
             "/usr/share/fonts/noto/NotoSans-SemiBold.ttf",
+            "/usr/share/fonts/noto/NotoSans-Medium.ttf",
+            "/usr/share/fonts/noto/NotoSans-Bold.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-SemiBold.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+            "/usr/share/fonts/google-noto/NotoSans-SemiBold.ttf",
+            "/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
+            // Liberation Sans & DejaVu Sans Bold
+            "/usr/share/fonts/TTF/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf",
             "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/cantarell/Cantarell-Bold.otf",
+            "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
         ];
-        for path in semibold_candidates {
-            if let Ok(bytes) = std::fs::read(path) {
-                fonts
-                    .font_data
-                    .insert("os_semibold".to_owned(), FontData::from_owned(bytes));
-                semibold_loaded = true;
-                break;
+        if let Some(bytes) = load_first(&semibold_system, &semibold_user) {
+            fonts
+                .font_data
+                .insert("os_semibold".to_owned(), FontData::from_owned(bytes));
+            semibold_loaded = true;
+        }
+
+        let mono_user = [
+            "JetBrainsMono-Regular.ttf",
+            "jetbrains-mono/JetBrainsMono-Regular.ttf",
+            "SFMono-Regular.otf",
+            "NotoSansMono-Regular.ttf",
+        ];
+        let mono_system = [
+            "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf",
+            "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf",
+            "/usr/share/fonts/jetbrains-mono-fonts/JetBrainsMono-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSansMono-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
+            "/usr/share/fonts/google-noto/NotoSansMono-Regular.ttf",
+            "/usr/share/fonts/truetype/ubuntu/UbuntuSansMono-Regular.ttf",
+            "/usr/share/fonts/truetype/ubuntu/UbuntuMono-R.ttf",
+            "/usr/share/fonts/TTF/LiberationMono-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationMono-Regular.ttf",
+            "/usr/share/fonts/liberation-mono/LiberationMono-Regular.ttf",
+            "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
+        ];
+        if let Some(bytes) = load_first(&mono_system, &mono_user) {
+            fonts
+                .font_data
+                .insert("os_mono".to_owned(), FontData::from_owned(bytes));
+            if let Some(fam) = fonts.families.get_mut(&FontFamily::Monospace) {
+                fam.insert(0, "os_mono".to_owned());
             }
         }
     }
@@ -235,6 +357,7 @@ pub struct Palette {
     pub sidebar_hover_bg: Color32,
     pub sidebar_accent: Color32,
     pub sidebar_text: Color32,
+    pub sidebar_inactive_text: Color32,
     pub sidebar_muted: Color32,
     pub sidebar_border: Color32,
 
@@ -282,6 +405,7 @@ impl Palette {
             sidebar_hover_bg: Color32::from_rgb(0x1B, 0x3A, 0x45),
             sidebar_accent: Color32::from_rgb(0x2D, 0xD4, 0xBF),
             sidebar_text: Color32::from_rgb(0xFF, 0xFF, 0xFF),
+            sidebar_inactive_text: Color32::from_rgb(0xD7, 0xE8, 0xEC),
             sidebar_muted: Color32::from_rgb(0x8E, 0xB4, 0xBC),
             sidebar_border: Color32::from_rgb(0x2B, 0x4C, 0x58),
 
@@ -289,7 +413,7 @@ impl Palette {
             topbar_bg: Color32::from_rgb(0xFF, 0xFF, 0xFF),
             card_bg: Color32::from_rgb(0xFF, 0xFF, 0xFF),
             card_sub_bg: Color32::from_rgb(0xF7, 0xFA, 0xFB),
-            card_border: Color32::from_rgb(0xDF, 0xE7, 0xEA),
+            card_border: Color32::from_rgb(0xE6, 0xED, 0xF0),
             input_bg: Color32::from_rgb(0xFF, 0xFF, 0xFF),
             input_border: Color32::from_rgb(0xCE, 0xDA, 0xDF),
 
@@ -329,6 +453,7 @@ impl Palette {
             sidebar_hover_bg: Color32::from_rgb(0x10, 0x24, 0x30),
             sidebar_accent: Color32::from_rgb(0x2D, 0xD4, 0xBF),
             sidebar_text: Color32::from_rgb(0xFF, 0xFF, 0xFF),
+            sidebar_inactive_text: Color32::from_rgb(0xD7, 0xE8, 0xEC),
             sidebar_muted: Color32::from_rgb(0x8E, 0xB4, 0xBC),
             sidebar_border: Color32::from_rgb(0x1E, 0x38, 0x47),
 
@@ -336,7 +461,7 @@ impl Palette {
             topbar_bg: Color32::from_rgb(0x13, 0x1E, 0x27),
             card_bg: Color32::from_rgb(0x16, 0x22, 0x2C),
             card_sub_bg: Color32::from_rgb(0x1B, 0x2A, 0x36),
-            card_border: Color32::from_rgb(0x24, 0x36, 0x44),
+            card_border: Color32::from_rgb(0x20, 0x30, 0x3D),
             input_bg: Color32::from_rgb(0x11, 0x1B, 0x24),
             input_border: Color32::from_rgb(0x2E, 0x43, 0x54),
 
@@ -412,6 +537,22 @@ fn detect_os_dark_mode() -> bool {
     }
     #[cfg(not(target_os = "windows"))]
     {
+        if let Ok(gtk_theme) = std::env::var("GTK_THEME")
+            && gtk_theme.to_ascii_lowercase().contains("dark")
+        {
+            return true;
+        }
+        if let Some(cfg_dir) = dirs::config_dir()
+            && let Ok(kdeglobals) = std::fs::read_to_string(cfg_dir.join("kdeglobals"))
+        {
+            for line in kdeglobals.lines() {
+                if let Some(scheme) = line.trim().strip_prefix("ColorScheme=")
+                    && scheme.to_ascii_lowercase().contains("dark")
+                {
+                    return true;
+                }
+            }
+        }
         false
     }
 }
@@ -423,6 +564,7 @@ pub fn apply_palette(ctx: &egui::Context, pal: &Palette) {
     style.spacing.item_spacing = Vec2::new(8.0, 8.0);
     style.spacing.button_padding = Vec2::new(12.0, 7.0);
     style.spacing.window_margin = Margin::same(20.0);
+    style.spacing.scroll = egui::style::ScrollStyle::floating();
 
     let mut visuals = if pal.is_dark {
         egui::Visuals::dark()
@@ -434,36 +576,59 @@ pub fn apply_palette(ctx: &egui::Context, pal: &Palette) {
     visuals.panel_fill = pal.canvas_bg;
     visuals.window_fill = pal.card_bg;
     visuals.window_stroke = Stroke::new(1.0, pal.card_border);
-    visuals.window_rounding = Rounding::same(12.0);
+    visuals.window_rounding = Rounding::same(14.0);
     visuals.extreme_bg_color = pal.input_bg;
     visuals.faint_bg_color = pal.card_sub_bg;
+
+    let hover_input_border = pal
+        .input_border
+        .gamma_multiply(if pal.is_dark { 1.18 } else { 0.85 });
 
     visuals.widgets.noninteractive.bg_fill = pal.card_bg;
     visuals.widgets.noninteractive.weak_bg_fill = pal.card_sub_bg;
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, pal.card_border);
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, pal.ink);
-    visuals.widgets.noninteractive.rounding = Rounding::same(7.0);
+    visuals.widgets.noninteractive.rounding = Rounding::same(8.0);
 
     visuals.widgets.inactive.bg_fill = pal.input_bg;
     visuals.widgets.inactive.weak_bg_fill = pal.secondary_btn;
     visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, pal.input_border);
     visuals.widgets.inactive.fg_stroke = Stroke::new(1.2, pal.ink);
-    visuals.widgets.inactive.rounding = Rounding::same(7.0);
+    visuals.widgets.inactive.rounding = Rounding::same(8.0);
 
     visuals.widgets.hovered.bg_fill = pal.secondary_btn_hover;
     visuals.widgets.hovered.weak_bg_fill = pal.secondary_btn_hover;
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.2, pal.primary_btn);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, hover_input_border);
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.4, pal.ink);
-    visuals.widgets.hovered.rounding = Rounding::same(7.0);
+    visuals.widgets.hovered.rounding = Rounding::same(8.0);
 
     visuals.widgets.active.bg_fill = pal.primary_btn;
     visuals.widgets.active.weak_bg_fill = pal.primary_btn;
     visuals.widgets.active.bg_stroke = Stroke::new(1.2, pal.primary_btn);
     visuals.widgets.active.fg_stroke = Stroke::new(1.5, pal.primary_btn_text);
-    visuals.widgets.active.rounding = Rounding::same(7.0);
+    visuals.widgets.active.rounding = Rounding::same(8.0);
+
+    visuals.widgets.open.bg_fill = pal.card_bg;
+    visuals.widgets.open.weak_bg_fill = pal.card_sub_bg;
+    visuals.widgets.open.bg_stroke = Stroke::new(1.2, pal.primary_btn);
+    visuals.widgets.open.fg_stroke = Stroke::new(1.3, pal.ink);
+    visuals.widgets.open.rounding = Rounding::same(8.0);
+
+    visuals.window_shadow = egui::epaint::Shadow {
+        offset: Vec2::new(0.0, 8.0),
+        blur: 24.0,
+        spread: 0.0,
+        color: Color32::from_black_alpha(if pal.is_dark { 110 } else { 42 }),
+    };
+    visuals.popup_shadow = egui::epaint::Shadow {
+        offset: Vec2::new(0.0, 4.0),
+        blur: 14.0,
+        spread: 0.0,
+        color: Color32::from_black_alpha(if pal.is_dark { 96 } else { 32 }),
+    };
 
     visuals.selection.bg_fill = pal.primary_btn.gamma_multiply(if pal.is_dark { 0.45 } else { 0.22 });
-    visuals.selection.stroke = Stroke::new(1.2, pal.primary_btn);
+    visuals.selection.stroke = Stroke::new(1.5, pal.primary_btn);
     visuals.hyperlink_color = pal.primary_btn;
 
     style.visuals = visuals;
@@ -571,50 +736,103 @@ pub fn set_os_autostart_enabled(enabled: bool) -> Result<(), String> {
         if enabled {
             std::fs::create_dir_all(&autostart_dir)
                 .map_err(|e| format!("Failed creating autostart folder: {e}"))?;
+            let exe_str = target_exe.display().to_string();
+            let escaped_exec = escape_desktop_exec_arg(&exe_str);
             let content = format!(
-                "[Desktop Entry]\nType=Application\nName=EntroCloud\nComment=Private Cloud Backup & Encrypted Drive\nExec=\"{}\"\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
-                target_exe.display()
+                "[Desktop Entry]\nType=Application\nName=EntroCloud\nComment=Private Cloud Backup & Encrypted Drive\nIcon=entrocloud\nExec=\"{escaped_exec}\"\nTerminal=false\nStartupNotify=false\nCategories=Utility;Network;FileTools;\nX-GNOME-Autostart-enabled=true\n"
             );
             std::fs::write(&desktop_file, content)
                 .map_err(|e| format!("Failed writing autostart entry: {e}"))
         } else {
-            if desktop_file.exists() {
-                std::fs::remove_file(&desktop_file)
-                    .map_err(|e| format!("Failed removing autostart entry: {e}"))?;
+            match std::fs::remove_file(&desktop_file) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(format!("Failed removing autostart entry: {e}")),
             }
-            Ok(())
         }
     }
+}
+
+/// Escapes an executable path for placement inside double quotes in an XDG `.desktop` `Exec=` key
+/// per the freedesktop Desktop Entry Specification (`\`, `"`, `` ` ``, `$`, and `%` -> `%%`).
+#[must_use]
+pub fn escape_desktop_exec_arg(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        match ch {
+            '\\' | '"' | '`' | '$' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            '%' => {
+                out.push_str("%%");
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 // =========================================================================
 // REUSABLE POLISHED UI COMPONENTS
 // =========================================================================
 
-/// Standard CloudBridge card (`#FFFFFF` / `#16222C`, `1px` `#DFE7EA` / `#243644` border, `12px` rounding, `22px` padding).
+fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let inv = 1.0 - t;
+    let [ar, ag, ab, aa] = a.to_array();
+    let [br, bg, bb, ba] = b.to_array();
+    Color32::from_rgba_premultiplied(
+        (f32::from(ar) * inv + f32::from(br) * t).round() as u8,
+        (f32::from(ag) * inv + f32::from(bg) * t).round() as u8,
+        (f32::from(ab) * inv + f32::from(bb) * t).round() as u8,
+        (f32::from(aa) * inv + f32::from(ba) * t).round() as u8,
+    )
+}
+
+fn darken_pressed(color: Color32, pressed: bool) -> Color32 {
+    if pressed {
+        color.gamma_multiply(0.93)
+    } else {
+        color
+    }
+}
+
+fn card_elevation_shadow(pal: &Palette) -> egui::epaint::Shadow {
+    egui::epaint::Shadow {
+        offset: Vec2::new(0.0, 1.5),
+        blur: 8.0,
+        spread: 0.0,
+        color: Color32::from_black_alpha(if pal.is_dark { 36 } else { 10 }),
+    }
+}
+
+/// Standard CloudBridge card (`#FFFFFF` / `#16222C`, softened `1px` border, `12px` rounding, `22px` padding, whisper elevation).
 pub fn card_frame(pal: &Palette) -> egui::Frame {
     egui::Frame::none()
         .fill(pal.card_bg)
         .stroke(Stroke::new(1.0, pal.card_border))
         .rounding(Rounding::same(12.0))
         .inner_margin(Margin::same(22.0))
+        .shadow(card_elevation_shadow(pal))
 }
 
-/// Compact card frame with custom padding (`10px` rounding).
+/// Compact card frame with custom padding (`12px` rounding and whisper elevation).
 pub fn compact_card_frame(pal: &Palette, pad_x: f32, pad_y: f32) -> egui::Frame {
     egui::Frame::none()
         .fill(pal.card_bg)
         .stroke(Stroke::new(1.0, pal.card_border))
-        .rounding(Rounding::same(10.0))
+        .rounding(Rounding::same(12.0))
         .inner_margin(Margin::symmetric(pad_x, pad_y))
+        .shadow(card_elevation_shadow(pal))
 }
 
-/// Subtle inset container inside a card (`card_sub_bg`, `9px` rounding).
+/// Subtle inset container inside a card (`card_sub_bg`, `8px` rounding).
 pub fn sub_card_frame(pal: &Palette) -> egui::Frame {
     egui::Frame::none()
         .fill(pal.card_sub_bg)
         .stroke(Stroke::new(1.0, pal.card_border))
-        .rounding(Rounding::same(9.0))
+        .rounding(Rounding::same(8.0))
         .inner_margin(Margin::symmetric(14.0, 12.0))
 }
 
@@ -622,6 +840,233 @@ pub fn sub_card_frame(pal: &Palette) -> egui::Frame {
 pub fn form_label(ui: &mut egui::Ui, pal: &Palette, text: &str) {
     let font = semibold_font(ui.ctx(), 13.0);
     ui.label(RichText::new(text).font(font).color(pal.ink));
+}
+
+/// Consistent full-width single-line `TextEdit` with balanced vertical padding matching action buttons.
+pub fn text_input_single<'a>(text: &'a mut String, hint: &'a str) -> egui::TextEdit<'a> {
+    egui::TextEdit::singleline(text)
+        .margin(Margin::symmetric(10.0, 7.5))
+        .desired_width(f32::INFINITY)
+        .hint_text(hint)
+}
+
+/// Lays out `[Left flexible widget (fills exact remaining width)]  [Right button/widget]`
+/// with zero hardcoded pixel subtractions and zero horizontal overflow on any font or DPI.
+pub fn input_row_with_right_widget<R>(
+    ui: &mut egui::Ui,
+    right_widget: impl FnOnce(&mut egui::Ui) -> R,
+    left_widget: impl FnOnce(&mut egui::Ui, f32),
+) -> R {
+    let total_w = ui.available_width().max(120.0);
+    let row_h = 36.0;
+    let inner = ui.allocate_ui_with_layout(
+        Vec2::new(total_w, row_h),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            let out = right_widget(ui);
+            let rem_w = ui.available_width().max(48.0);
+            ui.allocate_ui_with_layout(
+                Vec2::new(rem_w, row_h),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    left_widget(ui, rem_w);
+                },
+            );
+            out
+        },
+    );
+    inner.inner
+}
+
+/// Clickable choice / provider / policy card whose height expands automatically when text wraps
+/// on narrow windows or HiDPI scaling so labels never overflow bottom card borders.
+pub fn interactive_card(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    selected: bool,
+    min_height: f32,
+    pad: Vec2,
+    rounding: f32,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) -> Response {
+    let full_w = ui.available_width().max(80.0);
+    let bg_slot = ui.painter().add(egui::Shape::Noop);
+    let inner_resp = ui.scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
+        egui::Frame::none()
+            .inner_margin(Margin::symmetric(pad.x, pad.y))
+            .show(ui, |ui| {
+                let inner_w = (full_w - pad.x * 2.0).max(40.0);
+                ui.set_min_width(inner_w);
+                ui.set_max_width(inner_w);
+                if min_height > pad.y * 2.0 {
+                    ui.set_min_height(min_height - pad.y * 2.0);
+                }
+                add_contents(ui);
+            });
+    });
+    let resp = inner_resp.response;
+    if resp.hovered() && ui.is_enabled() {
+        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+    }
+    if ui.is_rect_visible(resp.rect) {
+        let enabled = ui.is_enabled();
+        let hover_t = ui
+            .ctx()
+            .animate_bool_with_time(resp.id, resp.hovered() && enabled, 0.12);
+        let pressed = resp.is_pointer_button_down_on() && enabled;
+        let (bg, border, bw) = if selected {
+            (
+                darken_pressed(pal.accent_soft_bg, pressed),
+                pal.primary_btn,
+                1.8,
+            )
+        } else {
+            (
+                darken_pressed(
+                    lerp_color(pal.card_sub_bg, pal.secondary_btn_hover, hover_t),
+                    pressed,
+                ),
+                lerp_color(
+                    pal.card_border,
+                    pal.primary_btn.gamma_multiply(0.60),
+                    hover_t,
+                ),
+                1.0 + 0.2 * hover_t,
+            )
+        };
+        let r = Rounding::same(rounding);
+        ui.painter().set(
+            bg_slot,
+            egui::Shape::Vec(vec![
+                egui::Shape::rect_filled(resp.rect, r, bg),
+                egui::Shape::rect_stroke(resp.rect, r, Stroke::new(bw, border)),
+            ]),
+        );
+    }
+    resp
+}
+
+/// Renders a centered, strictly width-bounded modal dialog over a dimmed full-window backdrop scrim.
+///
+/// Guarantees that inner `desired_width(f32::INFINITY)`, `ui.columns(...)`, and `Layout::right_to_left`
+/// rows stay locked to `target_width` (clamped safely to the viewport) with zero multi-frame inflation,
+/// zero ugly default `egui::Window` gray titlebars, `Escape`-to-close, and vertical scroll fallback on
+/// short viewports. Returns the outer modal card `Rect` once shown.
+pub fn modal_dialog<R>(
+    ctx: &egui::Context,
+    pal: &Palette,
+    id_salt: &'static str,
+    title: &str,
+    target_width: f32,
+    close_requested: &mut bool,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> Option<(R, Rect)> {
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        *close_requested = true;
+    }
+
+    let screen = ctx.screen_rect();
+
+    // 1. Full-window dimmed modal scrim that blocks background interactions
+    egui::Area::new(egui::Id::new((id_salt, "modal_scrim")))
+        .order(egui::Order::Middle)
+        .fixed_pos(screen.min)
+        .movable(false)
+        .fade_in(false)
+        .show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(screen.size(), Sense::click_and_drag());
+            let alpha = if pal.is_dark { 130 } else { 76 };
+            ui.painter()
+                .rect_filled(rect, Rounding::ZERO, Color32::from_black_alpha(alpha));
+        });
+
+    // 2. Strictly bounded centered modal card
+    let margin_px = 22.0;
+    let max_outer_w = (screen.width() - 48.0).max(260.0);
+    let inner_w = target_width
+        .min(max_outer_w - margin_px * 2.0)
+        .max(216.0);
+    let max_inner_h = (screen.height() - 64.0 - margin_px * 2.0).max(180.0);
+    let max_scroll_h = (max_inner_h - 56.0).max(120.0);
+
+    let modal_frame = egui::Frame::none()
+        .fill(pal.card_bg)
+        .stroke(Stroke::new(1.0, pal.card_border))
+        .rounding(Rounding::same(14.0))
+        .inner_margin(Margin::same(margin_px))
+        .shadow(egui::epaint::Shadow {
+            offset: Vec2::new(0.0, 10.0),
+            blur: 28.0,
+            spread: 0.0,
+            color: Color32::from_black_alpha(if pal.is_dark { 130 } else { 52 }),
+        });
+
+    let win_resp = egui::Window::new(title)
+        .id(egui::Id::new(id_salt))
+        .order(egui::Order::Foreground)
+        .title_bar(false)
+        .collapsible(false)
+        .resizable(false)
+        .movable(false)
+        .fade_in(false)
+        .fade_out(false)
+        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        .constrain_to(screen.shrink(16.0))
+        .default_size(Vec2::new(inner_w, max_inner_h))
+        .min_width(inner_w)
+        .max_width(inner_w)
+        .max_height(max_inner_h)
+        .frame(modal_frame)
+        .show(ctx, |ui| {
+            ui.set_min_width(inner_w);
+            ui.set_max_width(inner_w);
+            ui.set_max_height(max_inner_h);
+
+            // Clean custom modal header row + Close (X) button
+            input_row_with_right_widget(
+                ui,
+                |ui| {
+                    if icon_button(ui, pal, Icon::Close, "Close (Esc)").clicked() {
+                        *close_requested = true;
+                    }
+                },
+                |ui, rem_w| {
+                    ui.set_max_width(rem_w);
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(title)
+                                .font(semibold_font(ctx, 18.5))
+                                .color(pal.ink),
+                        )
+                        .truncate(),
+                    );
+                },
+            );
+
+            ui.add_space(6.0);
+            let sep_y = ui.cursor().top();
+            let sep_l = ui.max_rect().left();
+            let sep_r = ui.max_rect().right();
+            ui.painter().line_segment(
+                [Pos2::new(sep_l, sep_y), Pos2::new(sep_r, sep_y)],
+                Stroke::new(1.0, pal.card_border),
+            );
+            ui.add_space(12.0);
+
+            let scroll_out = egui::ScrollArea::vertical()
+                .id_salt((id_salt, "modal_body_scroll"))
+                .max_height(max_scroll_h)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.set_min_width(inner_w);
+                    ui.set_max_width(inner_w);
+                    add_contents(ui)
+                });
+            scroll_out.inner
+        })?;
+
+    let outer_rect = win_resp.response.rect;
+    win_resp.inner.map(|val| (val, outer_rect))
 }
 
 /// Primary `#007D78` / `#0D9488` teal action button with optional leading vector [`Icon`].
@@ -733,16 +1178,19 @@ pub fn icon_button(ui: &mut egui::Ui, pal: &Palette, icon: Icon, tooltip: &str) 
         ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
     }
     if ui.is_rect_visible(rect) {
-        let bg = if resp.hovered() || resp.is_pointer_button_down_on() {
-            pal.secondary_btn_hover
-        } else {
-            pal.secondary_btn
-        };
-        ui.painter()
-            .rect_filled(rect, Rounding::same(7.0), bg);
+        let enabled = ui.is_enabled();
+        let hover_t = ui
+            .ctx()
+            .animate_bool_with_time(resp.id, resp.hovered() && enabled, 0.12);
+        let pressed = resp.is_pointer_button_down_on() && enabled;
+        let bg = darken_pressed(
+            lerp_color(pal.secondary_btn, pal.secondary_btn_hover, hover_t),
+            pressed,
+        );
+        ui.painter().rect_filled(rect, Rounding::same(8.0), bg);
         ui.painter().rect_stroke(
             rect,
-            Rounding::same(7.0),
+            Rounding::same(8.0),
             Stroke::new(1.0, pal.secondary_btn_border),
         );
         paint_icon(ui.painter(), rect.shrink(7.5), icon, pal.ink);
@@ -780,20 +1228,21 @@ fn styled_action_button(
 
     if ui.is_rect_visible(rect) {
         let enabled = ui.is_enabled();
+        let hover_t = ui
+            .ctx()
+            .animate_bool_with_time(resp.id, resp.hovered() && enabled, 0.12);
+        let pressed = resp.is_pointer_button_down_on() && enabled;
         let fill = if !enabled {
             bg.gamma_multiply(0.50)
-        } else if resp.hovered() || resp.is_pointer_button_down_on() {
-            hover_bg
         } else {
-            bg
+            darken_pressed(lerp_color(bg, hover_bg, hover_t), pressed)
         };
         let draw_fg = if enabled { fg } else { fg.gamma_multiply(0.55) };
 
-        ui.painter()
-            .rect_filled(rect, Rounding::same(7.0), fill);
+        ui.painter().rect_filled(rect, Rounding::same(8.0), fill);
         if let Some(b_col) = border {
             ui.painter()
-                .rect_stroke(rect, Rounding::same(7.0), Stroke::new(1.0, b_col));
+                .rect_stroke(rect, Rounding::same(8.0), Stroke::new(1.0, b_col));
         }
 
         let mut cur_x = rect.left() + pad.x;
@@ -830,24 +1279,33 @@ pub fn sidebar_nav_item(
     }
 
     if ui.is_rect_visible(rect) {
+        let hover_t = ui
+            .ctx()
+            .animate_bool_with_time(resp.id, resp.hovered(), 0.12);
+        let pressed = resp.is_pointer_button_down_on();
+
         if active {
-            ui.painter()
-                .rect_filled(rect, Rounding::same(8.0), pal.sidebar_active_bg);
+            let bg = darken_pressed(pal.sidebar_active_bg, pressed);
+            ui.painter().rect_filled(rect, Rounding::same(8.0), bg);
             let pill = Rect::from_min_max(
                 Pos2::new(rect.left() + 3.0, rect.top() + 8.0),
                 Pos2::new(rect.left() + 6.5, rect.bottom() - 8.0),
             );
             ui.painter()
                 .rect_filled(pill, Rounding::same(2.0), pal.sidebar_accent);
-        } else if resp.hovered() {
-            ui.painter()
-                .rect_filled(rect, Rounding::same(8.0), pal.sidebar_hover_bg);
+        } else if hover_t > 0.001 || pressed {
+            let bg = if pressed {
+                darken_pressed(pal.sidebar_hover_bg, true)
+            } else {
+                lerp_color(Color32::TRANSPARENT, pal.sidebar_hover_bg, hover_t)
+            };
+            ui.painter().rect_filled(rect, Rounding::same(8.0), bg);
         }
 
-        let fg = if active || resp.hovered() {
+        let fg = if active {
             pal.sidebar_text
         } else {
-            Color32::from_rgb(0xD7, 0xE8, 0xEC)
+            lerp_color(pal.sidebar_inactive_text, pal.sidebar_text, hover_t)
         };
         let ic_color = if active { pal.sidebar_accent } else { fg };
 
@@ -915,11 +1373,12 @@ pub fn sidebar_action_button(
         ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
     }
     if ui.is_rect_visible(rect) {
-        let bg = if resp.hovered() {
-            pal.sidebar_active_bg.gamma_multiply(1.15)
-        } else {
-            pal.sidebar_active_bg
-        };
+        let hover_t = ui
+            .ctx()
+            .animate_bool_with_time(resp.id, resp.hovered(), 0.12);
+        let pressed = resp.is_pointer_button_down_on();
+        let hover_bg = pal.sidebar_active_bg.gamma_multiply(1.15);
+        let bg = darken_pressed(lerp_color(pal.sidebar_active_bg, hover_bg, hover_t), pressed);
         ui.painter().rect_filled(rect, Rounding::same(8.0), bg);
         ui.painter().rect_stroke(
             rect,
@@ -997,18 +1456,160 @@ pub fn status_pill(
 pub fn progress_bar_clean(ui: &mut egui::Ui, pal: &Palette, fraction: f32, height: f32) {
     let width = ui.available_width().max(40.0);
     let h = height.max(4.0);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, h), Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, h), Sense::hover());
+    let clamped = fraction.clamp(0.0, 1.0);
+    let animated = ui
+        .ctx()
+        .animate_value_with_time(resp.id, clamped, 0.18)
+        .clamp(0.0, 1.0);
     if ui.is_rect_visible(rect) {
         let r = Rounding::same(h * 0.5);
         ui.painter().rect_filled(rect, r, pal.progress_track);
-        let clamped = fraction.clamp(0.0, 1.0);
-        if clamped > 0.005 {
-            let fill_w = (rect.width() * clamped).max(h);
+        if animated > 0.005 {
+            let fill_w = (rect.width() * animated).max(h);
             let fill_rect =
                 Rect::from_min_max(rect.min, Pos2::new(rect.left() + fill_w, rect.bottom()));
             ui.painter().rect_filled(fill_rect, r, pal.primary_btn);
         }
     }
+}
+
+/// Apple-style segmented control: calm `card_sub_bg` rounded track (`8px` radius, `2px` inset)
+/// with a crisp elevated `card_bg` active pill (`6px` radius + subtle shadow) and smooth hover
+/// tint on inactive segments. Returns `true` when `*current` changes.
+pub fn segmented_control<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    current: &mut T,
+    options: &[(T, &str)],
+) -> bool {
+    if options.is_empty() {
+        return false;
+    }
+
+    let inset = 2.0;
+    let pad_x = 12.0;
+    let height = 30.0;
+    let seg_h = height - inset * 2.0;
+
+    let measure_font = semibold_font(ui.ctx(), 12.5);
+    let seg_widths: Vec<f32> = options
+        .iter()
+        .map(|(_, label)| {
+            let galley =
+                ui.painter()
+                    .layout_no_wrap((*label).to_owned(), measure_font.clone(), pal.ink);
+            (galley.size().x + pad_x * 2.0).max(48.0)
+        })
+        .collect();
+    let total_w = inset * 2.0 + seg_widths.iter().sum::<f32>();
+
+    let (track_rect, track_resp) =
+        ui.allocate_exact_size(Vec2::new(total_w, height), Sense::hover());
+
+    let visible = ui.is_rect_visible(track_rect);
+    if visible {
+        ui.painter()
+            .rect_filled(track_rect, Rounding::same(8.0), pal.card_sub_bg);
+        ui.painter().rect_stroke(
+            track_rect,
+            Rounding::same(8.0),
+            Stroke::new(1.0, pal.card_border),
+        );
+    }
+
+    let mut changed = false;
+    let mut cur_x = track_rect.left() + inset;
+    let enabled = ui.is_enabled();
+
+    for (idx, (&(val, label), &seg_w)) in options.iter().zip(seg_widths.iter()).enumerate() {
+        let seg_rect = Rect::from_min_size(
+            Pos2::new(cur_x, track_rect.top() + inset),
+            Vec2::new(seg_w, seg_h),
+        );
+        cur_x += seg_w;
+
+        let seg_id = track_resp.id.with(idx);
+        let resp = ui.interact(seg_rect, seg_id, Sense::click());
+        let is_active = *current == val;
+
+        if resp.hovered() && enabled {
+            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        }
+
+        let hover_t = ui.ctx().animate_bool_with_time(
+            resp.id,
+            resp.hovered() && !is_active && enabled,
+            0.12,
+        );
+        let pressed = resp.is_pointer_button_down_on() && enabled;
+
+        if visible {
+            if is_active {
+                let pill_shadow = egui::epaint::Shadow {
+                    offset: Vec2::new(0.0, 1.0),
+                    blur: 4.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(if pal.is_dark { 48 } else { 18 }),
+                };
+                ui.painter()
+                    .add(pill_shadow.as_shape(seg_rect, Rounding::same(6.0)));
+                ui.painter().rect_filled(
+                    seg_rect,
+                    Rounding::same(6.0),
+                    darken_pressed(pal.card_bg, pressed),
+                );
+                ui.painter().rect_stroke(
+                    seg_rect,
+                    Rounding::same(6.0),
+                    Stroke::new(0.75, pal.card_border),
+                );
+            } else if hover_t > 0.001 || pressed {
+                let tint = if pressed {
+                    if pal.is_dark {
+                        Color32::from_white_alpha(26)
+                    } else {
+                        Color32::from_black_alpha(20)
+                    }
+                } else {
+                    let target = if pal.is_dark {
+                        Color32::from_white_alpha(18)
+                    } else {
+                        Color32::from_black_alpha(12)
+                    };
+                    lerp_color(Color32::TRANSPARENT, target, hover_t)
+                };
+                ui.painter().rect_filled(seg_rect, Rounding::same(6.0), tint);
+            }
+
+            let fg = if is_active {
+                pal.ink
+            } else {
+                lerp_color(pal.muted, pal.ink, hover_t)
+            };
+            let font = if is_active {
+                semibold_font(ui.ctx(), 12.5)
+            } else {
+                FontId::proportional(12.5)
+            };
+            let galley = ui.painter().layout_no_wrap(label.to_owned(), font, fg);
+            ui.painter().galley(
+                Pos2::new(
+                    seg_rect.center().x - galley.size().x * 0.5,
+                    seg_rect.center().y - galley.size().y * 0.5,
+                ),
+                galley,
+                fg,
+            );
+        }
+
+        if resp.clicked() && enabled && !is_active {
+            *current = val;
+            changed = true;
+        }
+    }
+
+    changed
 }
 
 /// Visual horizontal 4-step onboarding stepper (`1. Welcome` -> `2. Connect a Cloud` -> ...).

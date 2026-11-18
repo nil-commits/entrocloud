@@ -4,8 +4,10 @@
 //! ZeroVault's 1-click detected cloud folders, Entra/Dropbox/S3/R2/B2/Nextcloud setup guides,
 //! Master Password strength meter, and immediate secret zeroization.
 
+use std::time::{Duration, Instant};
+
 use eframe::egui::{
-    self, Color32, CursorIcon, FontId, Pos2, Rect, RichText, Rounding, Sense, Stroke, Vec2,
+    self, Color32, FontId, Key, Margin, RichText, Rounding, Sense, Stroke, Vec2,
 };
 use entrocloud_types::{
     AddRemoteParams, DetectedCloudFolder, OAuthLoginParams, RemoteAccountSummary,
@@ -16,9 +18,10 @@ use crate::dialogs::{AsyncDialogs, DialogPurpose};
 use crate::icons::{Icon, paint_brand_mark, paint_icon};
 use crate::session::open_https_url;
 use crate::theme::{
-    Palette, PillTone, card_frame, danger_button, form_label, icon_button, primary_button,
-     progress_bar_clean, secondary_button, semibold_font, small_button, status_pill,
-    step_indicator, sub_card_frame,
+    Palette, PillTone, card_frame, danger_button, form_label, icon_button,
+    input_row_with_right_widget, interactive_card, primary_button, progress_bar_clean,
+    secondary_button, semibold_font, small_button, status_pill, step_indicator, sub_card_frame,
+    text_input_single,
 };
 use crate::worker::{UiCommand, UiWorkerHandle};
 
@@ -119,7 +122,7 @@ pub struct WizardState {
     pub show_pass: bool,
     pub form_error: Option<String>,
     pub copied_hint: Option<String>,
-    pub last_seen_connected_remote: Option<String>,
+    pub copied_hint_at: Option<Instant>,
 }
 
 impl Default for WizardState {
@@ -161,8 +164,13 @@ impl WizardState {
             show_pass: false,
             form_error: None,
             copied_hint: None,
-            last_seen_connected_remote: None,
+            copied_hint_at: None,
         }
+    }
+
+    fn set_copied_hint(&mut self, msg: &str) {
+        self.copied_hint = Some(msg.to_owned());
+        self.copied_hint_at = Some(Instant::now());
     }
 
     /// Zeroizes all sensitive credential and passphrase fields in the wizard.
@@ -181,6 +189,7 @@ impl WizardState {
         self.step = step;
         self.form_error = None;
         self.copied_hint = None;
+        self.copied_hint_at = None;
     }
 
     /// Opens directly to Step 2 (`Connect a Cloud`) when adding another cloud from the workspace.
@@ -191,6 +200,7 @@ impl WizardState {
         self.select_provider(provider);
         self.form_error = None;
         self.copied_hint = None;
+        self.copied_hint_at = None;
     }
 
     /// Selects a cloud provider in Step 2 and populates sensible default connection names.
@@ -198,6 +208,11 @@ impl WizardState {
         self.provider = provider;
         self.form_error = None;
         self.copied_hint = None;
+        self.copied_hint_at = None;
+        self.oauth_client_id.clear();
+        self.oauth_client_secret.zeroize();
+        self.quota_gb_preset = None;
+        self.custom_quota_gb.clear();
         match provider {
             WizardProvider::SyncedFolder => {
                 self.conn_name = "LocalBackup".to_owned();
@@ -282,11 +297,25 @@ impl WizardState {
         oauth_in_progress: Option<&str>,
         last_connected_remote: Option<&str>,
     ) -> WizardOutcome {
-        // Automatically react when a new remote finishes connecting in `standalone_add_cloud` mode.
-        if let Some(latest_id) = last_connected_remote
-            && self.last_seen_connected_remote.as_deref() != Some(latest_id)
-        {
-            self.last_seen_connected_remote = Some(latest_id.to_owned());
+        // Auto-clear transient "Copied ..." pill after 3 seconds
+        if let Some(at) = self.copied_hint_at {
+            if at.elapsed() >= Duration::from_secs(3) {
+                self.copied_hint = None;
+                self.copied_hint_at = None;
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(250));
+            }
+        }
+
+        // Allow Escape to close the standalone "Connect a Cloud" wizard cleanly
+        if self.standalone_add_cloud && ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.zeroize_secrets();
+            self.open = false;
+            return WizardOutcome::FinishToWorkspace;
+        }
+
+        // Automatically react when a new remote finishes connecting (`connected_remote_event` is one-shot).
+        if last_connected_remote.is_some() {
             self.oauth_client_secret.zeroize();
             self.s3_secret_key.zeroize();
             self.webdav_password.zeroize();
@@ -343,7 +372,7 @@ impl WizardState {
                                 self.open = false;
                                 outcome = WizardOutcome::FinishToWorkspace;
                             }
-                        } else if (vault_initialized || vault_unlocked || !remotes.is_empty())
+                        } else if (vault_initialized || vault_unlocked)
                             && secondary_button(ui, pal, None, "Skip to Workspace").clicked()
                         {
                             self.zeroize_secrets();
@@ -442,12 +471,17 @@ impl WizardState {
                     "2. Lock on your PC first",
                     "File contents and filenames are encrypted on this computer with your Master Password before upload.",
                 );
+                let drive_desc = if cfg!(target_os = "windows") {
+                    "Schedule automatic PC folder backups in the background or mount your vault inside File Explorer."
+                } else {
+                    "Schedule automatic folder backups in the background or mount your vault inside your File Manager."
+                };
                 welcome_pillar_card(
                     &mut cols[2],
                     pal,
                     Icon::HomeBackups,
                     "3. Automatic backup & drive",
-                    "Schedule automatic PC folder backups in the background or mount your vault inside File Explorer.",
+                    drive_desc,
                 );
             });
 
@@ -566,10 +600,15 @@ impl WizardState {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         let names: Vec<&str> = remotes.iter().map(|r| r.id.as_str()).collect();
+                        let noun = if remotes.len() == 1 {
+                            "cloud location"
+                        } else {
+                            "cloud locations"
+                        };
                         status_pill(ui, pal, Some(Icon::Check), "Connected", PillTone::Ok);
                         ui.label(
                             RichText::new(format!(
-                                "{} cloud location(s) ready: {}",
+                                "{} {noun} ready: {}",
                                 remotes.len(),
                                 names.join(", ")
                             ))
@@ -715,7 +754,7 @@ impl WizardState {
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let skip_label = if remotes.is_empty() {
-                        "Set Up Cloud Later -> Password"
+                        "Set Up Cloud Later → Password"
                     } else if vault_unlocked {
                         "Continue"
                     } else {
@@ -843,36 +882,36 @@ impl WizardState {
                 ui.add_space(12.0);
 
                 form_label(ui, pal, "Connection Name");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.conn_name)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("e.g. ExternalDrive"),
-                );
+                ui.add(text_input_single(&mut self.conn_name, "e.g. ExternalDrive"));
                 ui.add_space(8.0);
 
                 form_label(ui, pal, "Selected Folder");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.local_folder_path)
-                            .desired_width(ui.available_width() - 150.0)
-                            .hint_text("Choose a folder..."),
-                    );
-                    if secondary_button(
-                        ui,
-                        pal,
-                        Some(Icon::FolderOpen),
-                        "Browse Folders...",
-                    )
-                    .clicked()
-                    {
-                        dialogs.pick_folder(
-                            ctx,
-                            "Choose a folder or external drive for encrypted storage",
-                            None,
-                            DialogPurpose::WizardLocalCloudFolder,
-                        );
-                    }
-                });
+                input_row_with_right_widget(
+                    ui,
+                    |ui| {
+                        if secondary_button(
+                            ui,
+                            pal,
+                            Some(Icon::FolderOpen),
+                            "Browse Folders...",
+                        )
+                        .clicked()
+                        {
+                            dialogs.pick_folder(
+                                ctx,
+                                "Choose a folder or external drive for encrypted storage",
+                                None,
+                                DialogPurpose::WizardLocalCloudFolder,
+                            );
+                        }
+                    },
+                    |ui, _rem_w| {
+                        ui.add(text_input_single(
+                            &mut self.local_folder_path,
+                            "Choose a folder...",
+                        ));
+                    },
+                );
 
                 ui.add_space(8.0);
                 self.render_quota_presets(ui, pal, &[15, 100, 200, 2048]);
@@ -951,8 +990,9 @@ impl WizardState {
                         false,
                     )
                     .clicked()
+                        && let Err(err) = open_https_url("https://console.cloud.google.com/")
                     {
-                        let _ = open_https_url("https://console.cloud.google.com/");
+                        self.form_error = Some(err);
                     }
                     if small_button(
                         ui,
@@ -962,10 +1002,11 @@ impl WizardState {
                         false,
                     )
                     .clicked()
-                    {
-                        let _ = open_https_url(
+                        && let Err(err) = open_https_url(
                             "https://console.cloud.google.com/apis/library/drive.googleapis.com",
-                        );
+                        )
+                    {
+                        self.form_error = Some(err);
                     }
                 });
 
@@ -987,7 +1028,7 @@ impl WizardState {
                 ui.horizontal(|ui| {
                     if small_button(ui, pal, Some(Icon::Copy), "Copy Scope", false).clicked() {
                         ctx.copy_text("https://www.googleapis.com/auth/drive.file".to_owned());
-                        self.copied_hint = Some("Copied drive.file scope".to_owned());
+                        self.set_copied_hint("Copied drive.file scope");
                     }
                     ui.monospace(
                         RichText::new("https://www.googleapis.com/auth/drive.file")
@@ -1001,7 +1042,7 @@ impl WizardState {
                     ui,
                     pal,
                     "4",
-                    "Open Clients / Credentials -> Create Credentials -> OAuth client ID -> Desktop app, then copy your Client ID and Client Secret.",
+                    "Open Clients / Credentials → Create Credentials → OAuth client ID → Desktop app, then copy your Client ID and Client Secret.",
                 );
 
                 ui.add_space(6.0);
@@ -1031,45 +1072,43 @@ impl WizardState {
 
                 ui.columns(2, |fcols| {
                     form_label(&mut fcols[0], pal, "Connection Name");
-                    fcols[0].add(
-                        egui::TextEdit::singleline(&mut self.conn_name)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("GoogleDrive"),
-                    );
+                    fcols[0].add(text_input_single(&mut self.conn_name, "GoogleDrive"));
                     form_label(&mut fcols[1], pal, "Cloud Folder");
-                    fcols[1].add(
-                        egui::TextEdit::singleline(&mut self.cloud_folder)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("/EntroCloud"),
-                    );
+                    fcols[1].add(text_input_single(&mut self.cloud_folder, "/EntroCloud"));
                 });
 
                 ui.add_space(8.0);
                 form_label(ui, pal, "Google Desktop App OAuth Client ID");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.oauth_client_id)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("1234567890-abc...apps.googleusercontent.com"),
-                );
+                ui.add(text_input_single(
+                    &mut self.oauth_client_id,
+                    "1234567890-abc...apps.googleusercontent.com",
+                ));
 
                 ui.add_space(8.0);
                 form_label(ui, pal, "Google OAuth Client Secret");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut *self.oauth_client_secret)
-                            .password(!self.show_oauth_secret)
-                            .desired_width(ui.available_width() - 42.0)
-                            .hint_text("GOCSPX-..."),
-                    );
-                    let eye = if self.show_oauth_secret {
-                        Icon::EyeOff
-                    } else {
-                        Icon::Eye
-                    };
-                    if icon_button(ui, pal, eye, "Show or hide Client Secret").clicked() {
-                        self.show_oauth_secret = !self.show_oauth_secret;
-                    }
-                });
+                let show_sec = self.show_oauth_secret;
+                let mut toggle_sec = false;
+                input_row_with_right_widget(
+                    ui,
+                    |ui| {
+                        let eye = if show_sec { Icon::EyeOff } else { Icon::Eye };
+                        if icon_button(ui, pal, eye, "Show or hide Client Secret").clicked() {
+                            toggle_sec = true;
+                        }
+                    },
+                    |ui, _rem_w| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut *self.oauth_client_secret)
+                                .password(!show_sec)
+                                .margin(Margin::symmetric(10.0, 7.5))
+                                .desired_width(f32::INFINITY)
+                                .hint_text("GOCSPX-..."),
+                        );
+                    },
+                );
+                if toggle_sec {
+                    self.show_oauth_secret = !self.show_oauth_secret;
+                }
 
                 ui.add_space(8.0);
                 self.render_quota_presets(ui, pal, &[15, 100, 200, 2048]);
@@ -1125,10 +1164,11 @@ impl WizardState {
                     false,
                 )
                 .clicked()
-                {
-                    let _ = open_https_url(
+                    && let Err(err) = open_https_url(
                         "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
-                    );
+                    )
+                {
+                    self.form_error = Some(err);
                 }
                 ui.add_space(6.0);
                 guide_step_box(
@@ -1146,18 +1186,18 @@ impl WizardState {
                 );
                 if small_button(ui, pal, Some(Icon::Copy), "Copy Redirect URI", false).clicked() {
                     ctx.copy_text("http://127.0.0.1".to_owned());
-                    self.copied_hint = Some("Copied http://127.0.0.1".to_owned());
+                    self.set_copied_hint("Copied http://127.0.0.1");
                 }
                 ui.add_space(6.0);
                 guide_step_box(
                     ui,
                     pal,
                     "4",
-                    "Under API permissions -> Microsoft Graph -> Delegated permissions, add Files.ReadWrite and offline_access, then copy the Application (client) ID.",
+                    "Under API permissions → Microsoft Graph → Delegated permissions, add Files.ReadWrite and offline_access, then copy the Application (client) ID.",
                 );
                 if small_button(ui, pal, Some(Icon::Copy), "Copy Permissions", false).clicked() {
                     ctx.copy_text("Files.ReadWrite offline_access".to_owned());
-                    self.copied_hint = Some("Copied Graph permissions".to_owned());
+                    self.set_copied_hint("Copied Graph permissions");
                 }
             });
 
@@ -1170,25 +1210,16 @@ impl WizardState {
                 ui.add_space(12.0);
                 ui.columns(2, |fcols| {
                     form_label(&mut fcols[0], pal, "Connection Name");
-                    fcols[0].add(
-                        egui::TextEdit::singleline(&mut self.conn_name)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("OneDrive"),
-                    );
+                    fcols[0].add(text_input_single(&mut self.conn_name, "OneDrive"));
                     form_label(&mut fcols[1], pal, "Cloud Folder");
-                    fcols[1].add(
-                        egui::TextEdit::singleline(&mut self.cloud_folder)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("/EntroCloud"),
-                    );
+                    fcols[1].add(text_input_single(&mut self.cloud_folder, "/EntroCloud"));
                 });
                 ui.add_space(8.0);
                 form_label(ui, pal, "Application (Client) ID");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.oauth_client_id)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"),
-                );
+                ui.add(text_input_single(
+                    &mut self.oauth_client_id,
+                    "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+                ));
                 ui.add_space(8.0);
                 self.render_quota_presets(ui, pal, &[5, 100, 1024, 2048]);
                 ui.add_space(14.0);
@@ -1242,8 +1273,9 @@ impl WizardState {
                     false,
                 )
                 .clicked()
+                    && let Err(err) = open_https_url("https://www.dropbox.com/developers/apps")
                 {
-                    let _ = open_https_url("https://www.dropbox.com/developers/apps");
+                    self.form_error = Some(err);
                 }
                 ui.add_space(6.0);
                 guide_step_box(
@@ -1263,7 +1295,7 @@ impl WizardState {
                     ctx.copy_text(
                         "files.metadata.read files.content.write files.content.read".to_owned(),
                     );
-                    self.copied_hint = Some("Copied Dropbox scopes".to_owned());
+                    self.set_copied_hint("Copied Dropbox scopes");
                 }
                 ui.add_space(6.0);
                 guide_step_box(
@@ -1283,43 +1315,38 @@ impl WizardState {
                 ui.add_space(12.0);
                 ui.columns(2, |fcols| {
                     form_label(&mut fcols[0], pal, "Connection Name");
-                    fcols[0].add(
-                        egui::TextEdit::singleline(&mut self.conn_name)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("Dropbox"),
-                    );
+                    fcols[0].add(text_input_single(&mut self.conn_name, "Dropbox"));
                     form_label(&mut fcols[1], pal, "Cloud Folder");
-                    fcols[1].add(
-                        egui::TextEdit::singleline(&mut self.cloud_folder)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("/EntroCloud"),
-                    );
+                    fcols[1].add(text_input_single(&mut self.cloud_folder, "/EntroCloud"));
                 });
                 ui.add_space(8.0);
                 form_label(ui, pal, "Dropbox App Key");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.oauth_client_id)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("App key"),
-                );
+                ui.add(text_input_single(&mut self.oauth_client_id, "App key"));
                 ui.add_space(8.0);
                 form_label(ui, pal, "Dropbox App Secret (optional with PKCE)");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut *self.oauth_client_secret)
-                            .password(!self.show_oauth_secret)
-                            .desired_width(ui.available_width() - 42.0)
-                            .hint_text("Optional"),
-                    );
-                    let eye = if self.show_oauth_secret {
-                        Icon::EyeOff
-                    } else {
-                        Icon::Eye
-                    };
-                    if icon_button(ui, pal, eye, "Show or hide App Secret").clicked() {
-                        self.show_oauth_secret = !self.show_oauth_secret;
-                    }
-                });
+                let show_sec = self.show_oauth_secret;
+                let mut toggle_sec = false;
+                input_row_with_right_widget(
+                    ui,
+                    |ui| {
+                        let eye = if show_sec { Icon::EyeOff } else { Icon::Eye };
+                        if icon_button(ui, pal, eye, "Show or hide App Secret").clicked() {
+                            toggle_sec = true;
+                        }
+                    },
+                    |ui, _rem_w| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut *self.oauth_client_secret)
+                                .password(!show_sec)
+                                .margin(Margin::symmetric(10.0, 7.5))
+                                .desired_width(f32::INFINITY)
+                                .hint_text("Optional"),
+                        );
+                    },
+                );
+                if toggle_sec {
+                    self.show_oauth_secret = !self.show_oauth_secret;
+                }
                 ui.add_space(8.0);
                 self.render_quota_presets(ui, pal, &[2, 15, 2048]);
                 ui.add_space(14.0);
@@ -1375,7 +1402,7 @@ impl WizardState {
                 ui.add_space(10.0);
                 let hint_text = match self.s3_preset {
                     S3Preset::CloudflareR2 => {
-                        "Cloudflare R2: Create a bucket in your Cloudflare dashboard, open Manage R2 API Tokens -> Create API Token with Object Read & Write permissions, and replace <ACCOUNT_ID> in the endpoint URL."
+                        "Cloudflare R2: Create a bucket in your Cloudflare dashboard, open Manage R2 API Tokens → Create API Token with Object Read & Write permissions, and replace <ACCOUNT_ID> in the endpoint URL."
                     }
                     S3Preset::BackblazeB2 => {
                         "Backblaze B2: Create a private bucket, copy its S3 Endpoint (e.g. https://s3.us-west-004.backblazeb2.com), and generate an Application Key restricted to that bucket."
@@ -1404,63 +1431,52 @@ impl WizardState {
                 ui.add_space(10.0);
                 ui.columns(2, |fcols| {
                     form_label(&mut fcols[0], pal, "Connection Name");
-                    fcols[0].add(
-                        egui::TextEdit::singleline(&mut self.conn_name)
-                            .desired_width(f32::INFINITY),
-                    );
+                    fcols[0].add(text_input_single(&mut self.conn_name, "CloudflareR2"));
                     form_label(&mut fcols[1], pal, "Bucket Name");
-                    fcols[1].add(
-                        egui::TextEdit::singleline(&mut self.s3_bucket)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("my-encrypted-bucket"),
-                    );
+                    fcols[1].add(text_input_single(
+                        &mut self.s3_bucket,
+                        "my-encrypted-bucket",
+                    ));
                 });
                 ui.add_space(6.0);
                 ui.columns(2, |fcols| {
                     form_label(&mut fcols[0], pal, "Endpoint URL");
-                    fcols[0].add(
-                        egui::TextEdit::singleline(&mut self.s3_endpoint)
-                            .desired_width(f32::INFINITY),
-                    );
+                    fcols[0].add(text_input_single(&mut self.s3_endpoint, "https://..."));
                     form_label(&mut fcols[1], pal, "Region");
-                    fcols[1].add(
-                        egui::TextEdit::singleline(&mut self.s3_region)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("auto or us-east-1"),
-                    );
+                    fcols[1].add(text_input_single(&mut self.s3_region, "auto or us-east-1"));
                 });
                 ui.add_space(6.0);
                 ui.columns(2, |fcols| {
                     form_label(&mut fcols[0], pal, "Access Key ID");
-                    fcols[0].add(
-                        egui::TextEdit::singleline(&mut self.s3_access_key)
-                            .desired_width(f32::INFINITY),
-                    );
+                    fcols[0].add(text_input_single(&mut self.s3_access_key, "Access key"));
                     form_label(&mut fcols[1], pal, "Folder Prefix");
-                    fcols[1].add(
-                        egui::TextEdit::singleline(&mut self.cloud_folder)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("/EntroCloud"),
-                    );
+                    fcols[1].add(text_input_single(&mut self.cloud_folder, "/EntroCloud"));
                 });
                 ui.add_space(6.0);
                 form_label(ui, pal, "Secret Access Key");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut *self.s3_secret_key)
-                            .password(!self.show_s3_secret)
-                            .desired_width(ui.available_width() - 42.0)
-                            .hint_text("Stored safely in OS credential keyring"),
-                    );
-                    let eye = if self.show_s3_secret {
-                        Icon::EyeOff
-                    } else {
-                        Icon::Eye
-                    };
-                    if icon_button(ui, pal, eye, "Show or hide Secret Access Key").clicked() {
-                        self.show_s3_secret = !self.show_s3_secret;
-                    }
-                });
+                let show_s3 = self.show_s3_secret;
+                let mut toggle_s3 = false;
+                input_row_with_right_widget(
+                    ui,
+                    |ui| {
+                        let eye = if show_s3 { Icon::EyeOff } else { Icon::Eye };
+                        if icon_button(ui, pal, eye, "Show or hide Secret Access Key").clicked() {
+                            toggle_s3 = true;
+                        }
+                    },
+                    |ui, _rem_w| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut *self.s3_secret_key)
+                                .password(!show_s3)
+                                .margin(Margin::symmetric(10.0, 7.5))
+                                .desired_width(f32::INFINITY)
+                                .hint_text("Stored safely in OS credential keyring"),
+                        );
+                    },
+                );
+                if toggle_s3 {
+                    self.show_s3_secret = !self.show_s3_secret;
+                }
                 ui.add_space(12.0);
                 if primary_button(ui, pal, Some(Icon::Check), "Connect Storage").clicked() {
                     let id = self.conn_name.trim().to_owned();
@@ -1474,7 +1490,6 @@ impl WizardState {
                         );
                     } else {
                         self.form_error = None;
-                        self.s3_secret_key.zeroize();
                         worker.send(UiCommand::AddRemote {
                             params: Box::new(AddRemoteParams {
                                 id,
@@ -1515,7 +1530,7 @@ impl WizardState {
                     ui,
                     pal,
                     "1",
-                    "In Nextcloud, open Settings -> Security -> Devices & sessions, type EntroCloud, and click Create new app password.",
+                    "In Nextcloud, open Settings → Security → Devices & sessions, type EntroCloud, and click Create new app password.",
                 );
                 ui.add_space(6.0);
                 guide_step_box(
@@ -1528,7 +1543,7 @@ impl WizardState {
                     ctx.copy_text(
                         "https://cloud.example.com/remote.php/dav/files/username/".to_owned(),
                     );
-                    self.copied_hint = Some("Copied Nextcloud WebDAV example URL".to_owned());
+                    self.set_copied_hint("Copied Nextcloud WebDAV example URL");
                 }
                 ui.add_space(6.0);
                 guide_step_box(
@@ -1548,48 +1563,44 @@ impl WizardState {
                 ui.add_space(10.0);
                 ui.columns(2, |fcols| {
                     form_label(&mut fcols[0], pal, "Connection Name");
-                    fcols[0].add(
-                        egui::TextEdit::singleline(&mut self.conn_name)
-                            .desired_width(f32::INFINITY),
-                    );
+                    fcols[0].add(text_input_single(&mut self.conn_name, "Nextcloud"));
                     form_label(&mut fcols[1], pal, "Remote Folder");
-                    fcols[1].add(
-                        egui::TextEdit::singleline(&mut self.cloud_folder)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("/EntroCloud"),
-                    );
+                    fcols[1].add(text_input_single(&mut self.cloud_folder, "/EntroCloud"));
                 });
                 ui.add_space(6.0);
                 form_label(ui, pal, "WebDAV Server Address");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.webdav_endpoint)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("https://cloud.example.com/remote.php/dav/files/username/"),
-                );
+                ui.add(text_input_single(
+                    &mut self.webdav_endpoint,
+                    "https://cloud.example.com/remote.php/dav/files/username/",
+                ));
                 ui.add_space(6.0);
                 form_label(ui, pal, "Username");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.webdav_username)
-                        .desired_width(f32::INFINITY),
-                );
+                ui.add(text_input_single(&mut self.webdav_username, "Username"));
                 ui.add_space(6.0);
                 form_label(ui, pal, "App Password");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut *self.webdav_password)
-                            .password(!self.show_webdav_secret)
-                            .desired_width(ui.available_width() - 42.0)
-                            .hint_text("Stored safely in OS credential keyring"),
-                    );
-                    let eye = if self.show_webdav_secret {
-                        Icon::EyeOff
-                    } else {
-                        Icon::Eye
-                    };
-                    if icon_button(ui, pal, eye, "Show or hide App Password").clicked() {
-                        self.show_webdav_secret = !self.show_webdav_secret;
-                    }
-                });
+                let show_wd = self.show_webdav_secret;
+                let mut toggle_wd = false;
+                input_row_with_right_widget(
+                    ui,
+                    |ui| {
+                        let eye = if show_wd { Icon::EyeOff } else { Icon::Eye };
+                        if icon_button(ui, pal, eye, "Show or hide App Password").clicked() {
+                            toggle_wd = true;
+                        }
+                    },
+                    |ui, _rem_w| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut *self.webdav_password)
+                                .password(!show_wd)
+                                .margin(Margin::symmetric(10.0, 7.5))
+                                .desired_width(f32::INFINITY)
+                                .hint_text("Stored safely in OS credential keyring"),
+                        );
+                    },
+                );
+                if toggle_wd {
+                    self.show_webdav_secret = !self.show_webdav_secret;
+                }
                 ui.add_space(12.0);
                 if primary_button(ui, pal, Some(Icon::Check), "Connect Storage").clicked() {
                     let id = self.conn_name.trim().to_owned();
@@ -1603,7 +1614,6 @@ impl WizardState {
                         );
                     } else {
                         self.form_error = None;
-                        self.webdav_password.zeroize();
                         worker.send(UiCommand::AddRemote {
                             params: Box::new(AddRemoteParams {
                                 id,
@@ -1647,6 +1657,7 @@ impl WizardState {
             }
             ui.add(
                 egui::TextEdit::singleline(&mut self.custom_quota_gb)
+                    .margin(Margin::symmetric(8.0, 5.5))
                     .desired_width(82.0)
                     .hint_text("Custom GB"),
             );
@@ -1680,7 +1691,6 @@ impl WizardState {
         } else {
             Some(secret_trimmed)
         };
-        self.oauth_client_secret.zeroize();
         let folder = if self.cloud_folder.trim().is_empty() {
             "/EntroCloud".to_owned()
         } else {
@@ -1746,22 +1756,36 @@ impl WizardState {
 
                 ui.add_space(14.0);
                 form_label(ui, pal, "Master Password");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut *self.pass_input)
-                            .password(!self.show_pass)
-                            .desired_width(ui.available_width() - 42.0)
-                            .hint_text("Choose a strong password or memorable passphrase"),
-                    );
-                    let eye = if self.show_pass {
-                        Icon::EyeOff
-                    } else {
-                        Icon::Eye
-                    };
-                    if icon_button(ui, pal, eye, "Show or hide password").clicked() {
-                        self.show_pass = !self.show_pass;
-                    }
-                });
+                let show_pw = self.show_pass;
+                let mut toggle_pw = false;
+                let mut enter_submit = false;
+                input_row_with_right_widget(
+                    ui,
+                    |ui| {
+                        let eye = if show_pw { Icon::EyeOff } else { Icon::Eye };
+                        if icon_button(ui, pal, eye, "Show or hide password").clicked() {
+                            toggle_pw = true;
+                        }
+                    },
+                    |ui, _rem_w| {
+                        let edit = ui.add(
+                            egui::TextEdit::singleline(&mut *self.pass_input)
+                                .password(!show_pw)
+                                .margin(Margin::symmetric(10.0, 7.5))
+                                .desired_width(f32::INFINITY)
+                                .hint_text("Choose a strong password or memorable passphrase"),
+                        );
+                        if is_recover_or_existing
+                            && edit.lost_focus()
+                            && ctx.input(|i| i.key_pressed(Key::Enter))
+                        {
+                            enter_submit = true;
+                        }
+                    },
+                );
+                if toggle_pw {
+                    self.show_pass = !self.show_pass;
+                }
 
                 if !is_recover_or_existing {
                     let (score, strength_label) = password_strength(&self.pass_input);
@@ -1775,12 +1799,16 @@ impl WizardState {
 
                     ui.add_space(10.0);
                     form_label(ui, pal, "Repeat Master Password");
-                    ui.add(
+                    let confirm_edit = ui.add(
                         egui::TextEdit::singleline(&mut *self.pass_confirm)
                             .password(!self.show_pass)
+                            .margin(Margin::symmetric(10.0, 7.5))
                             .desired_width(f32::INFINITY)
                             .hint_text("Type your Master Password again to confirm"),
                     );
+                    if confirm_edit.lost_focus() && ctx.input(|i| i.key_pressed(Key::Enter)) {
+                        enter_submit = true;
+                    }
                     if !self.pass_confirm.is_empty() {
                         let matches = *self.pass_input == *self.pass_confirm;
                         ui.label(
@@ -1806,27 +1834,38 @@ impl WizardState {
                         self.step = WizardStep::ConnectCloud;
                     }
 
-                    let toggle_lbl = if is_recover_or_existing {
-                        "Create a new vault instead"
-                    } else {
-                        "Unlock an existing vault instead"
-                    };
-                    if small_button(ui, pal, None, toggle_lbl, false).clicked() {
-                        self.flow = if is_recover_or_existing {
-                            OnboardingFlow::CreateNewVault
+                    if !vault_initialized {
+                        let toggle_lbl = if is_recover_or_existing {
+                            "Create a new vault instead"
                         } else {
-                            OnboardingFlow::RecoverExistingVault
+                            "Unlock an existing vault instead"
                         };
-                        self.form_error = None;
+                        if small_button(ui, pal, None, toggle_lbl, false).clicked() {
+                            self.flow = if is_recover_or_existing {
+                                OnboardingFlow::CreateNewVault
+                            } else {
+                                OnboardingFlow::RecoverExistingVault
+                            };
+                            self.form_error = None;
+                        }
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let submit_lbl = if is_recover_or_existing {
+                        let unlocking = worker.state.lock().unlock_inflight;
+                        let submit_lbl = if unlocking {
+                            "Unlocking..."
+                        } else if is_recover_or_existing {
                             "Unlock Vault"
                         } else {
                             "Create Vault & Unlock"
                         };
-                        if primary_button(ui, pal, Some(Icon::Lock), submit_lbl).clicked() {
+                        let submit_clicked = ui
+                            .add_enabled_ui(!unlocking, |ui| {
+                                primary_button(ui, pal, Some(Icon::Lock), submit_lbl)
+                            })
+                            .inner
+                            .clicked();
+                        if !unlocking && (submit_clicked || enter_submit) {
                             if self.pass_input.is_empty() {
                                 self.form_error =
                                     Some("Enter your Master Password first.".to_owned());
@@ -1841,6 +1880,7 @@ impl WizardState {
                                 );
                             } else {
                                 self.form_error = None;
+                                worker.state.lock().toast_error = None;
                                 let secret = Zeroizing::new((*self.pass_input).clone());
                                 self.pass_input.zeroize();
                                 self.pass_confirm.zeroize();
@@ -1900,7 +1940,7 @@ impl WizardState {
                     &mut cols[0],
                     pal,
                     Icon::HomeBackups,
-                    "+ Add a PC Folder to Back Up Automatically",
+                    "Add a PC Folder to Back Up Automatically",
                     "Pick Documents, Photos, or Work folders and back them up on a schedule.",
                 )
                 .clicked()
@@ -1909,11 +1949,16 @@ impl WizardState {
                     self.open = false;
                     *outcome = WizardOutcome::FinishAndAddBackupFolder;
                 }
+                let drive_card_title = if cfg!(target_os = "windows") {
+                    "Turn On EntroCloud Drive in File Explorer"
+                } else {
+                    "Turn On EntroCloud Drive in File Manager"
+                };
                 if quick_finish_card(
                     &mut cols[1],
                     pal,
                     Icon::HardDrive,
-                    "Turn On EntroCloud Drive in File Explorer",
+                    drive_card_title,
                     "Open your encrypted cloud files like a normal folder on this computer.",
                 )
                 .clicked()
@@ -1995,46 +2040,33 @@ fn onboarding_choice_card(
     desc: &str,
     selected: bool,
 ) -> egui::Response {
-    let desired = Vec2::new(ui.available_width(), 86.0);
-    let (rect, resp) = ui.allocate_exact_size(desired, Sense::click());
-    if resp.hovered() {
-        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
-    }
-    if ui.is_rect_visible(rect) {
-        let (bg, border_col, bw) = if selected {
-            (pal.accent_soft_bg, pal.primary_btn, 1.8)
-        } else if resp.hovered() {
-            (pal.secondary_btn_hover, pal.secondary_btn_border, 1.0)
-        } else {
-            (pal.card_sub_bg, pal.card_border, 1.0)
-        };
-        ui.painter().rect_filled(rect, Rounding::same(10.0), bg);
-        ui.painter()
-            .rect_stroke(rect, Rounding::same(10.0), Stroke::new(bw, border_col));
-
-        let ic_rect = Rect::from_center_size(
-            Pos2::new(rect.left() + 24.0, rect.top() + 26.0),
-            Vec2::splat(20.0),
-        );
-        paint_icon(ui.painter(), ic_rect, icon, pal.primary_btn);
-
-        let inner = Rect::from_min_max(
-            Pos2::new(rect.left() + 44.0, rect.top() + 14.0),
-            Pos2::new(rect.right() - 14.0, rect.bottom() - 12.0),
-        );
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
-        child.label(
-            RichText::new(title)
-                .font(semibold_font(ui.ctx(), 14.2))
-                .color(pal.ink),
-        );
-        child.label(
-            RichText::new(desc)
-                .font(FontId::proportional(12.2))
-                .color(pal.muted),
-        );
-    }
-    resp
+    interactive_card(
+        ui,
+        pal,
+        selected,
+        88.0,
+        Vec2::new(14.0, 14.0),
+        10.0,
+        |ui| {
+            ui.horizontal_top(|ui| {
+                let (ic_r, _) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover());
+                paint_icon(ui.painter(), ic_r, icon, pal.primary_btn);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 3.0;
+                    ui.label(
+                        RichText::new(title)
+                            .font(semibold_font(ui.ctx(), 14.2))
+                            .color(pal.ink),
+                    );
+                    ui.label(
+                        RichText::new(desc)
+                            .font(FontId::proportional(12.2))
+                            .color(pal.muted),
+                    );
+                });
+            });
+        },
+    )
 }
 
 fn provider_tile(
@@ -2045,47 +2077,33 @@ fn provider_tile(
     subtitle: &str,
     selected: bool,
 ) -> egui::Response {
-    let desired = Vec2::new(ui.available_width(), 58.0);
-    let (rect, resp) = ui.allocate_exact_size(desired, Sense::click());
-    if resp.hovered() {
-        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
-    }
-    if ui.is_rect_visible(rect) {
-        let (bg, border, bw) = if selected {
-            (pal.accent_soft_bg, pal.primary_btn, 1.8)
-        } else if resp.hovered() {
-            (pal.secondary_btn_hover, pal.secondary_btn_border, 1.0)
-        } else {
-            (pal.card_sub_bg, pal.card_border, 1.0)
-        };
-        ui.painter().rect_filled(rect, Rounding::same(9.0), bg);
-        ui.painter()
-            .rect_stroke(rect, Rounding::same(9.0), Stroke::new(bw, border));
-
-        let ic_rect = Rect::from_center_size(
-            Pos2::new(rect.left() + 22.0, rect.center().y),
-            Vec2::splat(20.0),
-        );
-        paint_icon(ui.painter(), ic_rect, icon, pal.primary_btn);
-
-        let inner = Rect::from_min_max(
-            Pos2::new(rect.left() + 40.0, rect.top() + 9.0),
-            Pos2::new(rect.right() - 10.0, rect.bottom() - 8.0),
-        );
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
-        child.spacing_mut().item_spacing.y = 2.0;
-        child.label(
-            RichText::new(title)
-                .font(semibold_font(ui.ctx(), 13.4))
-                .color(pal.ink),
-        );
-        child.label(
-            RichText::new(subtitle)
-                .font(FontId::proportional(11.5))
-                .color(pal.muted),
-        );
-    }
-    resp
+    interactive_card(
+        ui,
+        pal,
+        selected,
+        60.0,
+        Vec2::new(12.0, 10.0),
+        9.0,
+        |ui| {
+            ui.horizontal(|ui| {
+                let (ic_r, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
+                paint_icon(ui.painter(), ic_r, icon, pal.primary_btn);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.label(
+                        RichText::new(title)
+                            .font(semibold_font(ui.ctx(), 13.4))
+                            .color(pal.ink),
+                    );
+                    ui.label(
+                        RichText::new(subtitle)
+                            .font(FontId::proportional(11.5))
+                            .color(pal.muted),
+                    );
+                });
+            });
+        },
+    )
 }
 
 fn guide_step_box(ui: &mut egui::Ui, pal: &Palette, step_num: &str, body: &str) {
@@ -2127,42 +2145,28 @@ fn quick_finish_card(
     title: &str,
     desc: &str,
 ) -> egui::Response {
-    let desired = Vec2::new(ui.available_width(), 126.0);
-    let (rect, resp) = ui.allocate_exact_size(desired, Sense::click());
-    if resp.hovered() {
-        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
-    }
-    if ui.is_rect_visible(rect) {
-        let bg = if resp.hovered() {
-            pal.accent_soft_bg
-        } else {
-            pal.card_sub_bg
-        };
-        let border = if resp.hovered() {
-            pal.primary_btn
-        } else {
-            pal.card_border
-        };
-        ui.painter().rect_filled(rect, Rounding::same(10.0), bg);
-        ui.painter()
-            .rect_stroke(rect, Rounding::same(10.0), Stroke::new(1.2, border));
-
-        let inner = rect.shrink(14.0);
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
-        let (ic_r, _) = child.allocate_exact_size(Vec2::splat(24.0), Sense::hover());
-        paint_icon(child.painter(), ic_r, icon, pal.primary_btn);
-        child.add_space(6.0);
-        child.label(
-            RichText::new(title)
-                .font(semibold_font(ui.ctx(), 13.8))
-                .color(pal.ink),
-        );
-        child.add_space(3.0);
-        child.label(
-            RichText::new(desc)
-                .font(FontId::proportional(12.1))
-                .color(pal.muted),
-        );
-    }
-    resp
+    interactive_card(
+        ui,
+        pal,
+        false,
+        130.0,
+        Vec2::new(14.0, 14.0),
+        10.0,
+        |ui| {
+            let (ic_r, _) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::hover());
+            paint_icon(ui.painter(), ic_r, icon, pal.primary_btn);
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(title)
+                    .font(semibold_font(ui.ctx(), 13.8))
+                    .color(pal.ink),
+            );
+            ui.add_space(3.0);
+            ui.label(
+                RichText::new(desc)
+                    .font(FontId::proportional(12.1))
+                    .color(pal.muted),
+            );
+        },
+    )
 }

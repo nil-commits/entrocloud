@@ -375,8 +375,7 @@ impl CloudBackend {
                 mapped
             })?;
 
-        let mut total = 0u64;
-        self.known_sizes.clear();
+        let mut scanned: Vec<(String, u64)> = Vec::new();
         while let Some(entry) = lister.try_next().await.map_err(|err| {
             let mapped = map_opendal_error(&self.config.id, "", err);
             self.record_backend_failure(&mapped);
@@ -384,14 +383,27 @@ impl CloudBackend {
         })? {
             if entry.metadata().is_file() {
                 let len = entry.metadata().content_length();
-                total = total.saturating_add(len);
-                self.known_sizes.insert(entry.path().to_owned(), len);
+                scanned.push((entry.path().to_owned(), len));
             }
         }
 
-        self.used_bytes.store(total, Ordering::Release);
-        self.record_success(started.elapsed());
-        Ok(total)
+        // Merge scanned object sizes without wiping any concurrent `put_object` updates.
+        for (path, len) in scanned {
+            self.known_sizes.entry(path).or_insert(len);
+        }
+        let merged_total: u64 = self
+            .known_sizes
+            .iter()
+            .fold(0u64, |acc, item| acc.saturating_add(*item.value()));
+
+        self.used_bytes.store(merged_total, Ordering::Release);
+        if self.latency_ms.load(Ordering::Acquire) == NO_LATENCY_SENTINEL {
+            self.record_success(started.elapsed());
+        } else {
+            self.healthy.store(true, Ordering::Release);
+            *self.last_error.write() = None;
+        }
+        Ok(merged_total)
     }
 
     /// Lock-free `AtomicU64` CAS quota reservation enforcing `quota_limit_bytes` and optional

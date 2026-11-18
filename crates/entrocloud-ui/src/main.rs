@@ -19,8 +19,8 @@ use clap::Parser;
 use eframe::egui;
 use entrocloud_types::{DaemonRequest, DaemonResponse};
 use entrocloud_ui::{
-    ColdBenchConfig, ColdBenchReport, EntroCloudApp, IpcClient, IpcEndpoint, TOUR_STEPS,
-    UiCliArgs, UiWorkerHandle, default_session_preview_dir, elapsed_ms,
+    ColdBenchConfig, ColdBenchReport, EntroCloudApp, IpcClient, IpcEndpoint, MODAL_TOUR_STEPS,
+    TOUR_STEPS, UiCliArgs, UiWorkerHandle, default_session_preview_dir, elapsed_ms,
     generate_entrocloud_rgba_icon, now_ticks,
 };
 use parking_lot::Mutex;
@@ -34,7 +34,7 @@ fn main() {
 
     let cli = UiCliArgs::parse();
 
-    if !cli.bench_cold && cli.screenshot_tour.is_none() {
+    if !cli.bench_cold && cli.screenshot_tour.is_none() && cli.screenshot_modals.is_none() {
         let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
         let _ = tracing_subscriber::fmt()
             .with_env_filter(filter)
@@ -49,7 +49,7 @@ fn main() {
 }
 
 fn run_ui(main_entry_ticks: i64, cli: UiCliArgs) -> Result<(), i32> {
-    let is_tour = cli.screenshot_tour.is_some();
+    let is_tour = cli.screenshot_tour.is_some() || cli.screenshot_modals.is_some();
 
     let (endpoint, is_default_endpoint) = match IpcEndpoint::resolve(cli.ipc.as_deref()) {
         Ok(pair) => pair,
@@ -114,6 +114,7 @@ fn run_ui(main_entry_ticks: i64, cli: UiCliArgs) -> Result<(), i32> {
         Arc::new(Mutex::new(Err("screenshot tour did not finish".to_owned())));
     let tour_slot_for_app = Arc::clone(&tour_result);
     let tour_dir = cli.screenshot_tour.clone();
+    let modal_tour_dir = cli.screenshot_modals.clone();
 
     let icon_rgba = generate_entrocloud_rgba_icon(32, 32);
     let icon_data = Arc::new(egui::IconData {
@@ -129,6 +130,7 @@ fn run_ui(main_entry_ticks: i64, cli: UiCliArgs) -> Result<(), i32> {
     };
 
     let viewport = egui::ViewportBuilder::default()
+        .with_app_id("entrocloud")
         .with_title("EntroCloud — Private Cloud Backup & Encrypted Drive")
         .with_inner_size(inner_size)
         .with_min_inner_size([920.0, 640.0])
@@ -155,6 +157,8 @@ fn run_ui(main_entry_ticks: i64, cli: UiCliArgs) -> Result<(), i32> {
             );
             if let Some(dir) = tour_dir {
                 app = app.with_screenshot_tour(dir, tour_slot_for_app);
+            } else if let Some(dir) = modal_tour_dir {
+                app = app.with_modal_screenshot_tour(dir, tour_slot_for_app);
             }
             Ok(Box::new(app))
         }),
@@ -166,20 +170,26 @@ fn run_ui(main_entry_ticks: i64, cli: UiCliArgs) -> Result<(), i32> {
     }
 
     if is_tour {
+        let expected_len = if cli.screenshot_modals.is_some() {
+            MODAL_TOUR_STEPS.len()
+        } else {
+            TOUR_STEPS.len()
+        };
+        let out_dir_disp = cli
+            .screenshot_tour
+            .as_deref()
+            .or(cli.screenshot_modals.as_deref())
+            .map_or_else(String::new, |p| p.display().to_string());
         let guard = tour_result.lock();
         match &*guard {
-            Ok(count) if *count == TOUR_STEPS.len() => {
+            Ok(count) if *count == expected_len => {
                 println!(
-                    "Captured {count} EntroCloud tour screenshots into {}",
-                    cli.screenshot_tour
-                        .as_deref()
-                        .map_or_else(String::new, |p| p.display().to_string())
+                    "Captured {count} EntroCloud tour screenshots into {out_dir_disp}"
                 );
             }
             Ok(count) => {
                 eprintln!(
-                    "Expected {} tour screenshots, captured {count}",
-                    TOUR_STEPS.len()
+                    "Expected {expected_len} tour screenshots, captured {count}"
                 );
                 return Err(1);
             }

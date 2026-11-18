@@ -9,7 +9,7 @@ pub mod settings;
 pub mod sharing;
 pub mod unlock;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use entrocloud_types::{
     BackupRunReport, ConflictRecord, CryptoBenchmarkReport, DetectedCloudFolder, KeyboxSummary,
@@ -79,6 +79,9 @@ pub struct FrameSnapshot {
     pub entries: Vec<VaultEntrySummary>,
     pub detected_clouds: Vec<DetectedCloudFolder>,
     pub remote_tests: HashMap<String, RemoteTestReport>,
+    pub testing_remotes: HashSet<String>,
+    pub backup_request_inflight: bool,
+    pub unlock_inflight: bool,
     pub last_backup_report: Option<BackupRunReport>,
     pub last_restored_folder: Option<(String, u64, u64)>,
     pub last_connected_remote: Option<String>,

@@ -7,8 +7,8 @@ use crate::traits::{
     HydrationState, InodeId, RoutingPolicy,
 };
 
-/// Maximum IPC frame payload permitted on the local daemon socket/named pipe (`1 MiB` pre-alloc DoS bound).
-pub const MAX_IPC_FRAME_BYTES: usize = 1024 * 1024;
+/// Maximum IPC frame payload permitted on the local daemon socket/named pipe (`4 MiB` pre-alloc DoS bound).
+pub const MAX_IPC_FRAME_BYTES: usize = 4 * 1024 * 1024;
 
 /// Remote backend configuration summary returned over IPC (secrets excluded).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

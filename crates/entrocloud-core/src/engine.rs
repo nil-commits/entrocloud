@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -412,12 +412,21 @@ impl SyncEngine {
         Ok(())
     }
 
-    /// Locks the cryptographic engine, zero-overwrites and removes all `.zvpart` local staging files,
-    /// clears decrypted LRU & manifest caches, releases pooled buffers, and reclaims `mimalloc` pages.
+    /// Locks the cryptographic engine, clears decrypted LRU & manifest caches, removes stray/non-dirty
+    /// staging files while preserving AEAD-encrypted `.zvpart` files for inodes with pending `dirty_ops`,
+    /// releases pooled buffers, and reclaims `mimalloc` pages.
     pub async fn lock_and_purge_cache(&self) -> ZeroVaultResult<()> {
         let _sync_guard = self.sync_lock.lock().await;
+        let dirty_inodes: HashSet<InodeId> = self
+            .meta
+            .list_dirty_ops()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|op| op.inode)
+            .collect();
         let lock_res = self.crypto.lock_vault().await;
-        let purge_res = self.cache.purge_all().await;
+        let purge_res = self.cache.purge_preserving_dirty(&dirty_inodes).await;
         self.committed_nodes.lock().clear();
         self.pool.clear_idle_buffers();
         reclaim_process_memory().await;
@@ -963,7 +972,17 @@ impl SyncEngine {
 
     /// Synchronizes local state with remote cloud storage and reclaims `mimalloc` idle pages on completion.
     pub async fn sync_once(&self) -> ZeroVaultResult<SyncReport> {
-        let res = self.sync_once_inner().await;
+        self.sync_once_with_options(None, None).await
+    }
+
+    /// Synchronizes local state with remote cloud storage with optional cooperative cancellation
+    /// and live `(completed_ops, total_ops)` progress callbacks.
+    pub async fn sync_once_with_options(
+        &self,
+        cancel_flag: Option<&AtomicBool>,
+        progress_cb: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
+    ) -> ZeroVaultResult<SyncReport> {
+        let res = self.sync_once_inner(cancel_flag, progress_cb).await;
         if self.pool.in_use_slots() == 0 {
             self.pool.clear_idle_buffers();
         }
@@ -971,7 +990,11 @@ impl SyncEngine {
         res
     }
 
-    async fn sync_once_inner(&self) -> ZeroVaultResult<SyncReport> {
+    async fn sync_once_inner(
+        &self,
+        cancel_flag: Option<&AtomicBool>,
+        progress_cb: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
+    ) -> ZeroVaultResult<SyncReport> {
         self.ensure_unlocked()?;
 
         let _sync_guard = self.sync_lock.lock().await;
@@ -1051,70 +1074,145 @@ impl SyncEngine {
             }
         }
 
-        // Phase 2: Replay queued dirty operations in FIFO order.
+        // Phase 2: Replay queued dirty operations in bounded parallel batches with live checkpoints.
+        const SYNC_BATCH_SIZE: usize = 64;
         let dirty_ops = self.meta.list_dirty_ops().await?;
-        let mut staged_finalize: Vec<(Option<InodeId>, i64)> = Vec::new();
+        let total_dirty = dirty_ops.len();
+        let completed_counter = AtomicUsize::new(0);
+        let file_concurrency = (self.pool.max_slots() / 2).clamp(1, 8);
         let mut last_op_err: Option<ZeroVaultError> = None;
+        let mut fatal_err: Option<ZeroVaultError> = None;
+        let mut cancelled = false;
 
-        for op in dirty_ops {
-            match op.kind {
-                DirtyOpKind::UpsertFile => {
-                    let inode_lock = self.inode_lock(op.inode);
-                    let _inode_guard = inode_lock.lock().await;
-                    match self.meta.get_inode(op.inode).await? {
-                        None => {
-                            self.meta.complete_dirty_op(op.id).await?;
-                        }
-                        Some(_) => match self.upload_dirty_inode_blobs(op.inode).await {
-                            Ok(()) => {
-                                staged_finalize.push((Some(op.inode), op.id));
+        if total_dirty > 0
+            && let Some(cb) = progress_cb
+        {
+            cb(0, total_dirty);
+        }
+
+        type DirtyOpOutcome = Result<Option<(Option<InodeId>, i64)>, (i64, ZeroVaultError)>;
+
+        for batch in dirty_ops.chunks(SYNC_BATCH_SIZE) {
+            if cancel_flag.is_some_and(|f| f.load(Ordering::Acquire)) {
+                cancelled = true;
+                break;
+            }
+
+            let outcomes: Vec<DirtyOpOutcome> =
+                stream::iter(batch.iter().cloned())
+                    .map(|op| {
+                        let completed_ref = &completed_counter;
+                        async move {
+                            if cancel_flag.is_some_and(|f| f.load(Ordering::Acquire)) {
+                                return Err((
+                                    op.id,
+                                    ZeroVaultError::Io(std::io::Error::new(
+                                        std::io::ErrorKind::Interrupted,
+                                        "backup cancelled by user",
+                                    )),
+                                ));
                             }
-                            Err(err) => {
-                                if is_fatal_sync_error(&err) {
-                                    return Err(err);
+                            let res = match op.kind {
+                                DirtyOpKind::UpsertFile => {
+                                    let inode_lock = self.inode_lock(op.inode);
+                                    let _inode_guard = inode_lock.lock().await;
+                                    match self.meta.get_inode(op.inode).await {
+                                        Ok(None) => {
+                                            let _ = self.meta.complete_dirty_op(op.id).await;
+                                            Ok(None)
+                                        }
+                                        Ok(Some(_)) => match self.upload_dirty_inode_blobs(op.inode).await {
+                                            Ok(()) => Ok(Some((Some(op.inode), op.id))),
+                                            Err(err) => Err((op.id, err)),
+                                        },
+                                        Err(err) => Err((op.id, err)),
+                                    }
                                 }
-                                self.meta.mark_dirty_retry(op.id, &err.to_string()).await?;
-                                report.failed_dirty_ops += 1;
-                                last_op_err = Some(err);
+                                DirtyOpKind::UpsertMetadata | DirtyOpKind::Delete => {
+                                    Ok(Some((None, op.id)))
+                                }
+                            };
+                            let done = completed_ref.fetch_add(1, Ordering::AcqRel) + 1;
+                            if let Some(cb) = progress_cb {
+                                cb(done.min(total_dirty), total_dirty);
                             }
-                        },
+                            res
+                        }
+                    })
+                    .buffer_unordered(file_concurrency)
+                    .collect()
+                    .await;
+
+            let mut staged_finalize: Vec<(Option<InodeId>, i64)> = Vec::with_capacity(outcomes.len());
+            for item in outcomes {
+                match item {
+                    Ok(Some(pair)) => staged_finalize.push(pair),
+                    Ok(None) => {}
+                    Err((_, err))
+                        if matches!(
+                            &err,
+                            ZeroVaultError::Io(io_e) if io_e.kind() == std::io::ErrorKind::Interrupted
+                        ) =>
+                    {
+                        cancelled = true;
+                    }
+                    Err((op_id, err)) => {
+                        if is_fatal_sync_error(&err) && fatal_err.is_none() {
+                            fatal_err = Some(err);
+                        } else {
+                            let _ = self.meta.mark_dirty_retry(op_id, &err.to_string()).await;
+                            report.failed_dirty_ops += 1;
+                            last_op_err = Some(err);
+                        }
                     }
                 }
-                DirtyOpKind::UpsertMetadata | DirtyOpKind::Delete => {
-                    staged_finalize.push((None, op.id));
+            }
+
+            if let Some(err) = fatal_err {
+                return Err(err);
+            }
+
+            // Phase 3 (per-batch checkpoint): Publish updated manifest snapshot and run Orphan `.zv` Blob GC (`NEW-L03`).
+            if !staged_finalize.is_empty() {
+                let uploaded_inodes: Vec<InodeId> = staged_finalize
+                    .iter()
+                    .filter_map(|(maybe_ino, _)| *maybe_ino)
+                    .collect();
+                match self.publish_manifest_locked(&uploaded_inodes).await {
+                    Ok((new_rev, gc_count)) => {
+                        report.published_revision = Some(new_rev);
+                        report.gc_deleted_blobs = report.gc_deleted_blobs.saturating_add(gc_count);
+                        for (maybe_inode, op_id) in staged_finalize {
+                            if let Some(inode) = maybe_inode {
+                                self.finalize_flushed_inode(inode).await?;
+                            }
+                            self.meta.complete_dirty_op(op_id).await?;
+                            report.replayed_dirty_ops += 1;
+                        }
+                    }
+                    Err(err) => {
+                        if is_fatal_sync_error(&err) {
+                            return Err(err);
+                        }
+                        let err_str = err.to_string();
+                        for (_, op_id) in staged_finalize {
+                            self.meta.mark_dirty_retry(op_id, &err_str).await?;
+                        }
+                        return Err(err);
+                    }
                 }
+            }
+
+            if cancelled {
+                break;
             }
         }
 
-        // Phase 3: Publish updated manifest snapshot and run Orphan `.zv` Blob GC (`NEW-L03`).
-        if !staged_finalize.is_empty() {
-            let uploaded_inodes: Vec<InodeId> = staged_finalize
-                .iter()
-                .filter_map(|(maybe_ino, _)| *maybe_ino)
-                .collect();
-            match self.publish_manifest_locked(&uploaded_inodes).await {
-                Ok((new_rev, gc_count)) => {
-                    report.published_revision = Some(new_rev);
-                    report.gc_deleted_blobs = gc_count;
-                    for (maybe_inode, op_id) in staged_finalize {
-                        if let Some(inode) = maybe_inode {
-                            self.finalize_flushed_inode(inode).await?;
-                        }
-                        self.meta.complete_dirty_op(op_id).await?;
-                        report.replayed_dirty_ops += 1;
-                    }
-                }
-                Err(err) => {
-                    if is_fatal_sync_error(&err) {
-                        return Err(err);
-                    }
-                    let err_str = err.to_string();
-                    for (_, op_id) in staged_finalize {
-                        self.meta.mark_dirty_retry(op_id, &err_str).await?;
-                    }
-                    return Err(err);
-                }
-            }
+        if cancelled {
+            return Err(ZeroVaultError::Io(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "backup cancelled by user",
+            )));
         }
 
         if let Some(err) = last_op_err {

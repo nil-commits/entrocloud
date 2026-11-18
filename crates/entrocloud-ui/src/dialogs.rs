@@ -56,6 +56,16 @@ pub enum DialogOutcome {
     Cancelled,
 }
 
+/// Drop guard ensuring `AsyncDialogs::active` is always reset to `false` even on thread spawn
+/// failure or unexpected panic inside the OS dialog thread.
+struct ActiveDialogGuard(Arc<AtomicBool>);
+
+impl Drop for ActiveDialogGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 /// Asynchronous OS dialog dispatcher owned by `EntroCloudApp`.
 pub struct AsyncDialogs {
     tx: Sender<DialogOutcome>,
@@ -109,7 +119,7 @@ impl AsyncDialogs {
             return;
         }
         let tx = self.tx.clone();
-        let active = Arc::clone(&self.active);
+        let guard = ActiveDialogGuard(Arc::clone(&self.active));
         let ctx_clone = ctx.clone();
         let title_owned = title.to_owned();
 
@@ -117,7 +127,7 @@ impl AsyncDialogs {
             .name("ec-dialog-files".to_owned())
             .spawn(move || {
                 let picked = rfd::FileDialog::new().set_title(&title_owned).pick_files();
-                active.store(false, Ordering::SeqCst);
+                drop(guard);
                 let outcome = match picked {
                     Some(paths) if !paths.is_empty() => {
                         DialogOutcome::FilesPicked { purpose, paths }
@@ -145,7 +155,7 @@ impl AsyncDialogs {
             return;
         }
         let tx = self.tx.clone();
-        let active = Arc::clone(&self.active);
+        let guard = ActiveDialogGuard(Arc::clone(&self.active));
         let ctx_clone = ctx.clone();
         let title_owned = title.to_owned();
 
@@ -157,7 +167,7 @@ impl AsyncDialogs {
                     dlg = dlg.set_directory(dir);
                 }
                 let picked = dlg.pick_folder();
-                active.store(false, Ordering::SeqCst);
+                drop(guard);
                 let outcome = match picked {
                     Some(path) => DialogOutcome::FolderPicked { purpose, path },
                     None => DialogOutcome::Cancelled,
@@ -183,7 +193,7 @@ impl AsyncDialogs {
             return;
         }
         let tx = self.tx.clone();
-        let active = Arc::clone(&self.active);
+        let guard = ActiveDialogGuard(Arc::clone(&self.active));
         let ctx_clone = ctx.clone();
         let title_owned = title.to_owned();
         let name_owned = suggested_file_name.to_owned();
@@ -196,7 +206,7 @@ impl AsyncDialogs {
                     dlg = dlg.set_file_name(&name_owned);
                 }
                 let picked = dlg.save_file();
-                active.store(false, Ordering::SeqCst);
+                drop(guard);
                 let outcome = match picked {
                     Some(path) => DialogOutcome::SaveFilePicked { purpose, path },
                     None => DialogOutcome::Cancelled,

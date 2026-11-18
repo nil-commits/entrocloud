@@ -9,25 +9,21 @@ Type=simple
 ExecStart=/usr/bin/entrocloudd
 Restart=on-failure
 RestartSec=3s
+TimeoutStopSec=15s
 Environment=RUST_LOG=info
 
-# Pre-create owner-only state, config, and runtime directories before sandboxing
-StateDirectory=entrocloud
-StateDirectoryMode=0700
+# Pre-create owner-only runtime ($XDG_RUNTIME_DIR/entrocloud) and config directories
 ConfigurationDirectory=entrocloud
 ConfigurationDirectoryMode=0700
 RuntimeDirectory=entrocloud
 RuntimeDirectoryMode=0700
 UMask=0077
 
-# Resource & filesystem privilege hardening
-MemoryMax=256M
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=%h/.local/share/entrocloud %h/.config/entrocloud %h/EntroCloud %t
-RestrictSUIDSGID=true
+# Resource & process hardening
+# Note: NoNewPrivileges and RestrictSUIDSGID are intentionally omitted so unprivileged
+# FUSE3 mounts can invoke setuid /usr/bin/fusermount3.
+MemoryHigh=256M
+MemoryMax=512M
 RestrictRealtime=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
