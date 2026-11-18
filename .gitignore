@@ -1,6 +1,8 @@
 /target/
 /dist/
 **/bin/
+!crates/*/src/bin/
+!crates/*/src/bin/**
 **/obj/
 **/*.rs.bk
 *.pdb
