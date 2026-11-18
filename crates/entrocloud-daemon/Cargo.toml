@@ -1,0 +1,41 @@
+[package]
+name = "entrocloud-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "entrocloudd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+dirs = { workspace = true }
+libmimalloc-sys = { workspace = true }
+mimalloc = { workspace = true }
+parking_lot = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+entrocloud-core = { workspace = true }
+entrocloud-crypto = { workspace = true }
+entrocloud-storage = { workspace = true }
+entrocloud-types = { workspace = true }
+entrocloud-vfs = { workspace = true }
+zeroize = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+widestring = { workspace = true }
+windows = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = { workspace = true }

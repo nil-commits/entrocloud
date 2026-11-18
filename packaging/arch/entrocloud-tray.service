@@ -1,0 +1,28 @@
+[Unit]
+Description=EntroCloud Lightweight System Tray Helper (0 B Closed-Window UI RAM)
+Documentation=https://cloud.entropy.rs/entrocloud
+PartOf=graphical-session.target
+After=graphical-session.target entrocloudd.service
+Wants=entrocloudd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/entrocloud-tray
+Restart=on-failure
+RestartSec=3s
+Environment=RUST_LOG=info
+UMask=0077
+
+# Privilege & filesystem sandboxing (allows spawning on-demand entrocloud UI)
+MemoryMax=256M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/entrocloud %h/.config/entrocloud %h/EntroCloud %t
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=graphical-session.target

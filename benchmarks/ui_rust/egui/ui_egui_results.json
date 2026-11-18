@@ -1,0 +1,1234 @@
+{
+    "candidate":  "Wave 1 UI Silicon Bake-Off Candidate B2: Pure Rust eframe/egui Native Desktop UI",
+    "timestamp_utc":  "2026-11-17T18:30:54Z",
+    "zero_webview2_verified":  true,
+    "host_silicon":  {
+                         "cpu":  "AMD Ryzen 9 7950X3D 16-Core Processor (32 Logical Processors)",
+                         "gpu":  "NVIDIA GeForce RTX 4080 SUPER",
+                         "os":  "Windows 11 x86_64 (x86_64-pc-windows-msvc)",
+                         "rustc":  "rustc 1.94.1 (e408947bf 2026-03-25)",
+                         "release_profile":  {
+                                                 "opt_level":  3,
+                                                 "lto":  "thin",
+                                                 "codegen_units":  1,
+                                                 "strip":  "symbols"
+                                             }
+                     },
+    "recommended_primary_backend":  "glow (OpenGL/WGL via egui_glow 0.29.1)",
+    "binaries":  {
+                     "glow_ui_exe":  {
+                                         "path":  "<workspace>\\target\\swarm\\bakeoff-ui-rust\\egui\\release\\zerovault_ui_egui_glow.exe",
+                                         "canonical_copy":  "<workspace>\\target\\swarm\\bakeoff-ui-rust\\egui\\release\\zerovault_ui_egui.exe",
+                                         "size_bytes":  5363712,
+                                         "size_mib":  5.115,
+                                         "webview2_dll_count":  0,
+                                         "dependents":  [
+                                                            "kernel32.dll",
+                                                            "shlwapi.dll",
+                                                            "user32.dll",
+                                                            "uiautomationcore.dll",
+                                                            "gdi32.dll",
+                                                            "comctl32.dll",
+                                                            "shell32.dll",
+                                                            "ntdll.dll",
+                                                            "oleaut32.dll",
+                                                            "ole32.dll",
+                                                            "uxtheme.dll",
+                                                            "bcryptprimitives.dll",
+                                                            "api-ms-win-core-synch-l1-2-0.dll",
+                                                            "advapi32.dll",
+                                                            "opengl32.dll",
+                                                            "imm32.dll",
+                                                            "dwmapi.dll",
+                                                            "VCRUNTIME140.dll",
+                                                            "api-ms-win-crt-math-l1-1-0.dll",
+                                                            "api-ms-win-crt-string-l1-1-0.dll",
+                                                            "api-ms-win-crt-runtime-l1-1-0.dll",
+                                                            "api-ms-win-crt-stdio-l1-1-0.dll",
+                                                            "api-ms-win-crt-locale-l1-1-0.dll",
+                                                            "api-ms-win-crt-heap-l1-1-0.dll"
+                                                        ]
+                                     },
+                     "wgpu_ui_exe":  {
+                                         "path":  "<workspace>\\target\\swarm\\bakeoff-ui-rust\\egui\\release\\zerovault_ui_egui_wgpu.exe",
+                                         "size_bytes":  12257280,
+                                         "size_mib":  11.689,
+                                         "webview2_dll_count":  0,
+                                         "dependents":  [
+                                                            "shlwapi.dll",
+                                                            "kernel32.dll",
+                                                            "user32.dll",
+                                                            "uiautomationcore.dll",
+                                                            "gdi32.dll",
+                                                            "comctl32.dll",
+                                                            "shell32.dll",
+                                                            "ntdll.dll",
+                                                            "oleaut32.dll",
+                                                            "ole32.dll",
+                                                            "uxtheme.dll",
+                                                            "bcryptprimitives.dll",
+                                                            "api-ms-win-core-synch-l1-2-0.dll",
+                                                            "advapi32.dll",
+                                                            "imm32.dll",
+                                                            "opengl32.dll",
+                                                            "d3dcompiler_47.dll",
+                                                            "dwmapi.dll",
+                                                            "VCRUNTIME140.dll",
+                                                            "api-ms-win-crt-math-l1-1-0.dll",
+                                                            "api-ms-win-crt-string-l1-1-0.dll",
+                                                            "api-ms-win-crt-runtime-l1-1-0.dll",
+                                                            "api-ms-win-crt-stdio-l1-1-0.dll",
+                                                            "api-ms-win-crt-locale-l1-1-0.dll",
+                                                            "api-ms-win-crt-heap-l1-1-0.dll"
+                                                        ]
+                                     },
+                     "tray_helper_exe":  {
+                                             "path":  "<workspace>\\target\\swarm\\bakeoff-ui-rust\\egui\\release\\zerovault_tray_egui.exe",
+                                             "size_bytes":  433152,
+                                             "size_mib":  0.413,
+                                             "webview2_dll_count":  0,
+                                             "dependents":  [
+                                                                "kernel32.dll",
+                                                                "gdi32.dll",
+                                                                "user32.dll",
+                                                                "comctl32.dll",
+                                                                "shell32.dll",
+                                                                "ntdll.dll",
+                                                                "api-ms-win-core-synch-l1-2-0.dll",
+                                                                "bcryptprimitives.dll",
+                                                                "VCRUNTIME140.dll",
+                                                                "api-ms-win-crt-math-l1-1-0.dll",
+                                                                "api-ms-win-crt-runtime-l1-1-0.dll",
+                                                                "api-ms-win-crt-stdio-l1-1-0.dll",
+                                                                "api-ms-win-crt-locale-l1-1-0.dll",
+                                                                "api-ms-win-crt-heap-l1-1-0.dll"
+                                                            ]
+                                         }
+                 },
+    "closed_window_architecture":  {
+                                       "closed_window_gpu_ui_process_rss_bytes":  0,
+                                       "closed_window_gpu_ui_process_rss_mib":  0,
+                                       "dedicated_tray_helper_working_set_mib":  8.27,
+                                       "dedicated_tray_helper_private_usage_mib":  1.387,
+                                       "single_binary_tray_mode_working_set_mib":  10.957,
+                                       "single_binary_tray_mode_private_usage_mib":  1.98
+                                   },
+    "suite_glow_primary":  {
+                               "backend":  "glow",
+                               "exe_path":  "<workspace>\\target\\swarm\\bakeoff-ui-rust\\egui\\release\\zerovault_ui_egui_glow.exe",
+                               "exe_size_bytes":  5363712,
+                               "exe_size_mib":  5.115,
+                               "cold_runs_count":  20,
+                               "cold_external_spawn_to_frame1_ms":  {
+                                                                        "count":  20,
+                                                                        "min":  161.818,
+                                                                        "p50":  166.515,
+                                                                        "p95":  171.993,
+                                                                        "p99":  174.804,
+                                                                        "max":  175.507,
+                                                                        "mean":  167.075
+                                                                    },
+                               "cold_internal_main_to_frame1_ms":  {
+                                                                       "count":  20,
+                                                                       "min":  150.566,
+                                                                       "p50":  155.22,
+                                                                       "p95":  160.386,
+                                                                       "p99":  163.352,
+                                                                       "max":  164.093,
+                                                                       "mean":  155.652
+                                                                   },
+                               "cold_external_total_exit_ms":  {
+                                                                   "count":  20,
+                                                                   "min":  233.43,
+                                                                   "p50":  238.069,
+                                                                   "p95":  243.875,
+                                                                   "p99":  246.404,
+                                                                   "max":  247.036,
+                                                                   "mean":  238.643
+                                                               },
+                               "cold_working_set_mib":  {
+                                                            "count":  20,
+                                                            "min":  69.098,
+                                                            "p50":  69.201,
+                                                            "p95":  69.356,
+                                                            "p99":  69.365,
+                                                            "max":  69.367,
+                                                            "mean":  69.213
+                                                        },
+                               "cold_peak_working_set_mib":  {
+                                                                 "count":  20,
+                                                                 "min":  69.945,
+                                                                 "p50":  70.055,
+                                                                 "p95":  70.165,
+                                                                 "p99":  70.186,
+                                                                 "max":  70.191,
+                                                                 "mean":  70.055
+                                                             },
+                               "cold_private_usage_mib":  {
+                                                              "count":  20,
+                                                              "min":  67.871,
+                                                              "p50":  68.795,
+                                                              "p95":  69.441,
+                                                              "p99":  69.554,
+                                                              "max":  69.582,
+                                                              "mean":  68.714
+                                                          },
+                               "cold_raw_runs":  [
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.906,
+                                                         "internal_cold_start_ms":  164.093,
+                                                         "external_cold_start_ms":  175.507,
+                                                         "frame1_update_cpu_ms":  0.719,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72556544,
+                                                                        "working_set_mib":  69.195,
+                                                                        "peak_working_set_bytes":  73494528,
+                                                                        "peak_working_set_mib":  70.09,
+                                                                        "private_usage_bytes":  72962048,
+                                                                        "private_usage_mib":  69.582,
+                                                                        "page_fault_count":  20720
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.616,
+                                                         "internal_cold_start_ms":  154.416,
+                                                         "external_cold_start_ms":  165.852,
+                                                         "frame1_update_cpu_ms":  0.714,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72548352,
+                                                                        "working_set_mib":  69.188,
+                                                                        "peak_working_set_bytes":  73363456,
+                                                                        "peak_working_set_mib":  69.965,
+                                                                        "private_usage_bytes":  71933952,
+                                                                        "private_usage_mib":  68.602,
+                                                                        "page_fault_count":  20962
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.56,
+                                                         "internal_cold_start_ms":  153.485,
+                                                         "external_cold_start_ms":  165.136,
+                                                         "frame1_update_cpu_ms":  0.683,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72564736,
+                                                                        "working_set_mib":  69.203,
+                                                                        "peak_working_set_bytes":  73486336,
+                                                                        "peak_working_set_mib":  70.082,
+                                                                        "private_usage_bytes":  72220672,
+                                                                        "private_usage_mib":  68.875,
+                                                                        "page_fault_count":  20751
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.587,
+                                                         "internal_cold_start_ms":  153.871,
+                                                         "external_cold_start_ms":  165.455,
+                                                         "frame1_update_cpu_ms":  0.671,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72536064,
+                                                                        "working_set_mib":  69.176,
+                                                                        "peak_working_set_bytes":  73383936,
+                                                                        "peak_working_set_mib":  69.984,
+                                                                        "private_usage_bytes":  71405568,
+                                                                        "private_usage_mib":  68.098,
+                                                                        "page_fault_count":  21237
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.69,
+                                                         "internal_cold_start_ms":  155.289,
+                                                         "external_cold_start_ms":  166.633,
+                                                         "frame1_update_cpu_ms":  0.68,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72552448,
+                                                                        "working_set_mib":  69.191,
+                                                                        "peak_working_set_bytes":  73400320,
+                                                                        "peak_working_set_mib":  70.0,
+                                                                        "private_usage_bytes":  72114176,
+                                                                        "private_usage_mib":  68.773,
+                                                                        "page_fault_count":  20715
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.6,
+                                                         "internal_cold_start_ms":  160.191,
+                                                         "external_cold_start_ms":  171.808,
+                                                         "frame1_update_cpu_ms":  0.68,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72646656,
+                                                                        "working_set_mib":  69.281,
+                                                                        "peak_working_set_bytes":  73543680,
+                                                                        "peak_working_set_mib":  70.137,
+                                                                        "private_usage_bytes":  72171520,
+                                                                        "private_usage_mib":  68.828,
+                                                                        "page_fault_count":  21250
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.616,
+                                                         "internal_cold_start_ms":  150.566,
+                                                         "external_cold_start_ms":  161.818,
+                                                         "frame1_update_cpu_ms":  0.681,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72572928,
+                                                                        "working_set_mib":  69.211,
+                                                                        "peak_working_set_bytes":  73404416,
+                                                                        "peak_working_set_mib":  70.004,
+                                                                        "private_usage_bytes":  72695808,
+                                                                        "private_usage_mib":  69.328,
+                                                                        "page_fault_count":  20730
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.624,
+                                                         "internal_cold_start_ms":  156.788,
+                                                         "external_cold_start_ms":  167.996,
+                                                         "frame1_update_cpu_ms":  0.711,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72581120,
+                                                                        "working_set_mib":  69.219,
+                                                                        "peak_working_set_bytes":  73465856,
+                                                                        "peak_working_set_mib":  70.063,
+                                                                        "private_usage_bytes":  71352320,
+                                                                        "private_usage_mib":  68.047,
+                                                                        "page_fault_count":  20723
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.633,
+                                                         "internal_cold_start_ms":  158.263,
+                                                         "external_cold_start_ms":  169.793,
+                                                         "frame1_update_cpu_ms":  0.7,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72597504,
+                                                                        "working_set_mib":  69.234,
+                                                                        "peak_working_set_bytes":  73416704,
+                                                                        "peak_working_set_mib":  70.016,
+                                                                        "private_usage_bytes":  71307264,
+                                                                        "private_usage_mib":  68.004,
+                                                                        "page_fault_count":  20716
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.611,
+                                                         "internal_cold_start_ms":  158.364,
+                                                         "external_cold_start_ms":  169.656,
+                                                         "frame1_update_cpu_ms":  0.686,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72454144,
+                                                                        "working_set_mib":  69.098,
+                                                                        "peak_working_set_bytes":  73408512,
+                                                                        "peak_working_set_mib":  70.008,
+                                                                        "private_usage_bytes":  71385088,
+                                                                        "private_usage_mib":  68.078,
+                                                                        "page_fault_count":  20735
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.631,
+                                                         "internal_cold_start_ms":  152.122,
+                                                         "external_cold_start_ms":  163.835,
+                                                         "frame1_update_cpu_ms":  0.692,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72589312,
+                                                                        "working_set_mib":  69.227,
+                                                                        "peak_working_set_bytes":  73555968,
+                                                                        "peak_working_set_mib":  70.148,
+                                                                        "private_usage_bytes":  71249920,
+                                                                        "private_usage_mib":  67.949,
+                                                                        "page_fault_count":  20731
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.66,
+                                                         "internal_cold_start_ms":  157.527,
+                                                         "external_cold_start_ms":  168.86,
+                                                         "frame1_update_cpu_ms":  0.724,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72560640,
+                                                                        "working_set_mib":  69.199,
+                                                                        "peak_working_set_bytes":  73375744,
+                                                                        "peak_working_set_mib":  69.977,
+                                                                        "private_usage_bytes":  71757824,
+                                                                        "private_usage_mib":  68.434,
+                                                                        "page_fault_count":  20738
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.57,
+                                                         "internal_cold_start_ms":  153.803,
+                                                         "external_cold_start_ms":  165.428,
+                                                         "frame1_update_cpu_ms":  0.677,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72589312,
+                                                                        "working_set_mib":  69.227,
+                                                                        "peak_working_set_bytes":  73572352,
+                                                                        "peak_working_set_mib":  70.164,
+                                                                        "private_usage_bytes":  71168000,
+                                                                        "private_usage_mib":  67.871,
+                                                                        "page_fault_count":  21251
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.537,
+                                                         "internal_cold_start_ms":  153.792,
+                                                         "external_cold_start_ms":  165.04,
+                                                         "frame1_update_cpu_ms":  0.701,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72622080,
+                                                                        "working_set_mib":  69.258,
+                                                                        "peak_working_set_bytes":  73449472,
+                                                                        "peak_working_set_mib":  70.047,
+                                                                        "private_usage_bytes":  72806400,
+                                                                        "private_usage_mib":  69.434,
+                                                                        "page_fault_count":  20723
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.578,
+                                                         "internal_cold_start_ms":  152.969,
+                                                         "external_cold_start_ms":  164.445,
+                                                         "frame1_update_cpu_ms":  0.697,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72531968,
+                                                                        "working_set_mib":  69.172,
+                                                                        "peak_working_set_bytes":  73400320,
+                                                                        "peak_working_set_mib":  70.0,
+                                                                        "private_usage_bytes":  72134656,
+                                                                        "private_usage_mib":  68.793,
+                                                                        "page_fault_count":  20727
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.565,
+                                                         "internal_cold_start_ms":  150.899,
+                                                         "external_cold_start_ms":  162.236,
+                                                         "frame1_update_cpu_ms":  0.719,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72491008,
+                                                                        "working_set_mib":  69.133,
+                                                                        "peak_working_set_bytes":  73510912,
+                                                                        "peak_working_set_mib":  70.105,
+                                                                        "private_usage_bytes":  72794112,
+                                                                        "private_usage_mib":  69.422,
+                                                                        "page_fault_count":  21251
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.611,
+                                                         "internal_cold_start_ms":  156.024,
+                                                         "external_cold_start_ms":  167.459,
+                                                         "frame1_update_cpu_ms":  0.679,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72507392,
+                                                                        "working_set_mib":  69.148,
+                                                                        "peak_working_set_bytes":  73342976,
+                                                                        "peak_working_set_mib":  69.945,
+                                                                        "private_usage_bytes":  72613888,
+                                                                        "private_usage_mib":  69.25,
+                                                                        "page_fault_count":  21209
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.593,
+                                                         "internal_cold_start_ms":  158.487,
+                                                         "external_cold_start_ms":  169.981,
+                                                         "frame1_update_cpu_ms":  0.692,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72544256,
+                                                                        "working_set_mib":  69.184,
+                                                                        "peak_working_set_bytes":  73465856,
+                                                                        "peak_working_set_mib":  70.063,
+                                                                        "private_usage_bytes":  72138752,
+                                                                        "private_usage_mib":  68.797,
+                                                                        "page_fault_count":  21231
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.737,
+                                                         "internal_cold_start_ms":  156.935,
+                                                         "external_cold_start_ms":  168.162,
+                                                         "frame1_update_cpu_ms":  0.669,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72736768,
+                                                                        "working_set_mib":  69.367,
+                                                                        "peak_working_set_bytes":  73601024,
+                                                                        "peak_working_set_mib":  70.191,
+                                                                        "private_usage_bytes":  72556544,
+                                                                        "private_usage_mib":  69.195,
+                                                                        "page_fault_count":  20766
+                                                                    }
+                                                     },
+                                                     {
+                                                         "mode":  "bench-cold",
+                                                         "backend":  "glow",
+                                                         "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                         "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                         "ipc_mode":  "external_named_pipe",
+                                                         "initial_ipc_seq":  10,
+                                                         "ipc_connect_first_frame_ms":  0.569,
+                                                         "internal_cold_start_ms":  155.151,
+                                                         "external_cold_start_ms":  166.397,
+                                                         "frame1_update_cpu_ms":  0.727,
+                                                         "memory":  {
+                                                                        "working_set_bytes":  72724480,
+                                                                        "working_set_mib":  69.355,
+                                                                        "peak_working_set_bytes":  73510912,
+                                                                        "peak_working_set_mib":  70.105,
+                                                                        "private_usage_bytes":  72257536,
+                                                                        "private_usage_mib":  68.91,
+                                                                        "page_fault_count":  20740
+                                                                    }
+                                                     }
+                                                 ],
+                               "bench_60fps_5s":  {
+                                                      "mode":  "bench-60fps",
+                                                      "backend":  "glow",
+                                                      "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+                                                      "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                      "ipc_mode":  "external_named_pipe",
+                                                      "target_ipc_frames":  300,
+                                                      "rendered_ipc_frames":  300,
+                                                      "total_gpu_frames":  602,
+                                                      "elapsed_wall_ms":  5068.082,
+                                                      "achieved_fps":  59.194,
+                                                      "frame_pacing_ms":  {
+                                                                              "count":  299,
+                                                                              "min":  14.787,
+                                                                              "p50":  16.664,
+                                                                              "p95":  16.784,
+                                                                              "p99":  16.911,
+                                                                              "max":  101.789,
+                                                                              "mean":  16.946
+                                                                          },
+                                                      "frame_render_cpu_ms":  {
+                                                                                  "count":  601,
+                                                                                  "min":  0.225,
+                                                                                  "p50":  0.436,
+                                                                                  "p95":  0.669,
+                                                                                  "p99":  0.835,
+                                                                                  "max":  14.498,
+                                                                                  "mean":  0.467
+                                                                              },
+                                                      "memory":  {
+                                                                     "working_set_bytes":  101355520,
+                                                                     "working_set_mib":  96.66,
+                                                                     "peak_working_set_bytes":  101523456,
+                                                                     "peak_working_set_mib":  96.82,
+                                                                     "private_usage_bytes":  93126656,
+                                                                     "private_usage_mib":  88.813,
+                                                                     "page_fault_count":  90373
+                                                                 }
+                                                  },
+                               "tray_same_binary_mode":  {
+                                                             "mode":  "bench-tray",
+                                                             "binary_role":  "single_exe_tray_mode",
+                                                             "closed_window_ui_process_rss_bytes":  0,
+                                                             "tray_init_ms":  1.57,
+                                                             "settle_duration_ms":  400,
+                                                             "memory":  {
+                                                                            "working_set_bytes":  11489280,
+                                                                            "working_set_mib":  10.957,
+                                                                            "peak_working_set_bytes":  11489280,
+                                                                            "peak_working_set_mib":  10.957,
+                                                                            "private_usage_bytes":  2076672,
+                                                                            "private_usage_mib":  1.98,
+                                                                            "page_fault_count":  2884
+                                                                        }
+                                                         },
+                               "tray_dedicated_helper_exe":  {
+                                                                 "exe_path":  "<workspace>\\target\\swarm\\bakeoff-ui-rust\\egui\\release\\zerovault_tray_egui.exe",
+                                                                 "exe_size_bytes":  433152,
+                                                                 "exe_size_mib":  0.413,
+                                                                 "result":  {
+                                                                                "mode":  "bench-tray",
+                                                                                "binary_role":  "dedicated_tray_helper_exe",
+                                                                                "closed_window_ui_process_rss_bytes":  0,
+                                                                                "tray_init_ms":  2.247,
+                                                                                "settle_duration_ms":  400,
+                                                                                "memory":  {
+                                                                                               "working_set_bytes":  8671232,
+                                                                                               "working_set_mib":  8.27,
+                                                                                               "peak_working_set_bytes":  8671232,
+                                                                                               "peak_working_set_mib":  8.27,
+                                                                                               "private_usage_bytes":  1454080,
+                                                                                               "private_usage_mib":  1.387,
+                                                                                               "page_fault_count":  2187
+                                                                                           }
+                                                                            }
+                                                             }
+                           },
+    "suite_wgpu_dx12_comparison":  {
+                                       "backend":  "wgpu",
+                                       "exe_path":  "<workspace>\\target\\swarm\\bakeoff-ui-rust\\egui\\release\\zerovault_ui_egui_wgpu.exe",
+                                       "exe_size_bytes":  12257280,
+                                       "exe_size_mib":  11.689,
+                                       "cold_runs_count":  20,
+                                       "cold_external_spawn_to_frame1_ms":  {
+                                                                                "count":  20,
+                                                                                "min":  338.317,
+                                                                                "p50":  344.683,
+                                                                                "p95":  384.675,
+                                                                                "p99":  908.216,
+                                                                                "max":  1039.101,
+                                                                                "mean":  379.271
+                                                                            },
+                                       "cold_internal_main_to_frame1_ms":  {
+                                                                               "count":  20,
+                                                                               "min":  326.192,
+                                                                               "p50":  332.705,
+                                                                               "p95":  372.158,
+                                                                               "p99":  895.868,
+                                                                               "max":  1026.795,
+                                                                               "mean":  367.006
+                                                                           },
+                                       "cold_external_total_exit_ms":  {
+                                                                           "count":  20,
+                                                                           "min":  453.145,
+                                                                           "p50":  459.82,
+                                                                           "p95":  535.808,
+                                                                           "p99":  1029.219,
+                                                                           "max":  1152.572,
+                                                                           "mean":  497.208
+                                                                       },
+                                       "cold_working_set_mib":  {
+                                                                    "count":  20,
+                                                                    "min":  173.949,
+                                                                    "p50":  174.104,
+                                                                    "p95":  174.263,
+                                                                    "p99":  174.281,
+                                                                    "max":  174.285,
+                                                                    "mean":  174.11
+                                                                },
+                                       "cold_peak_working_set_mib":  {
+                                                                         "count":  20,
+                                                                         "min":  173.977,
+                                                                         "p50":  174.147,
+                                                                         "p95":  174.281,
+                                                                         "p99":  174.284,
+                                                                         "max":  174.285,
+                                                                         "mean":  174.145
+                                                                     },
+                                       "cold_private_usage_mib":  {
+                                                                      "count":  20,
+                                                                      "min":  471.395,
+                                                                      "p50":  472.333,
+                                                                      "p95":  473.193,
+                                                                      "p99":  473.223,
+                                                                      "max":  473.23,
+                                                                      "mean":  472.355
+                                                                  },
+                                       "cold_raw_runs":  [
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  62,
+                                                                 "ipc_connect_first_frame_ms":  0.672,
+                                                                 "internal_cold_start_ms":  1026.795,
+                                                                 "external_cold_start_ms":  1039.101,
+                                                                 "frame1_update_cpu_ms":  0.702,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182751232,
+                                                                                "working_set_mib":  174.285,
+                                                                                "peak_working_set_bytes":  182751232,
+                                                                                "peak_working_set_mib":  174.285,
+                                                                                "private_usage_bytes":  495067136,
+                                                                                "private_usage_mib":  472.133,
+                                                                                "page_fault_count":  49319
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  21,
+                                                                 "ipc_connect_first_frame_ms":  0.741,
+                                                                 "internal_cold_start_ms":  335.585,
+                                                                 "external_cold_start_ms":  348.18,
+                                                                 "frame1_update_cpu_ms":  0.665,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182497280,
+                                                                                "working_set_mib":  174.043,
+                                                                                "peak_working_set_bytes":  182599680,
+                                                                                "peak_working_set_mib":  174.141,
+                                                                                "private_usage_bytes":  495312896,
+                                                                                "private_usage_mib":  472.367,
+                                                                                "page_fault_count":  49751
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  21,
+                                                                 "ipc_connect_first_frame_ms":  0.603,
+                                                                 "internal_cold_start_ms":  334.894,
+                                                                 "external_cold_start_ms":  347.353,
+                                                                 "frame1_update_cpu_ms":  0.628,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182579200,
+                                                                                "working_set_mib":  174.121,
+                                                                                "peak_working_set_bytes":  182579200,
+                                                                                "peak_working_set_mib":  174.121,
+                                                                                "private_usage_bytes":  494415872,
+                                                                                "private_usage_mib":  471.512,
+                                                                                "page_fault_count":  48875
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  20,
+                                                                 "ipc_connect_first_frame_ms":  0.62,
+                                                                 "internal_cold_start_ms":  332.918,
+                                                                 "external_cold_start_ms":  345.362,
+                                                                 "frame1_update_cpu_ms":  0.676,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182525952,
+                                                                                "working_set_mib":  174.07,
+                                                                                "peak_working_set_bytes":  182669312,
+                                                                                "peak_working_set_mib":  174.207,
+                                                                                "private_usage_bytes":  496177152,
+                                                                                "private_usage_mib":  473.191,
+                                                                                "page_fault_count":  49106
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  20,
+                                                                 "ipc_connect_first_frame_ms":  0.645,
+                                                                 "internal_cold_start_ms":  332.517,
+                                                                 "external_cold_start_ms":  344.582,
+                                                                 "frame1_update_cpu_ms":  0.719,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182661120,
+                                                                                "working_set_mib":  174.199,
+                                                                                "peak_working_set_bytes":  182747136,
+                                                                                "peak_working_set_mib":  174.281,
+                                                                                "private_usage_bytes":  495611904,
+                                                                                "private_usage_mib":  472.652,
+                                                                                "page_fault_count":  49298
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  20,
+                                                                 "ipc_connect_first_frame_ms":  0.731,
+                                                                 "internal_cold_start_ms":  333.195,
+                                                                 "external_cold_start_ms":  345.453,
+                                                                 "frame1_update_cpu_ms":  0.672,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182599680,
+                                                                                "working_set_mib":  174.141,
+                                                                                "peak_working_set_bytes":  182611968,
+                                                                                "peak_working_set_mib":  174.152,
+                                                                                "private_usage_bytes":  495296512,
+                                                                                "private_usage_mib":  472.352,
+                                                                                "page_fault_count":  49341
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  20,
+                                                                 "ipc_connect_first_frame_ms":  0.572,
+                                                                 "internal_cold_start_ms":  332.074,
+                                                                 "external_cold_start_ms":  344.47,
+                                                                 "frame1_update_cpu_ms":  0.679,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182636544,
+                                                                                "working_set_mib":  174.176,
+                                                                                "peak_working_set_bytes":  182706176,
+                                                                                "peak_working_set_mib":  174.242,
+                                                                                "private_usage_bytes":  494927872,
+                                                                                "private_usage_mib":  472.0,
+                                                                                "page_fault_count":  49273
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  21,
+                                                                 "ipc_connect_first_frame_ms":  0.625,
+                                                                 "internal_cold_start_ms":  334.259,
+                                                                 "external_cold_start_ms":  346.633,
+                                                                 "frame1_update_cpu_ms":  0.631,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182497280,
+                                                                                "working_set_mib":  174.043,
+                                                                                "peak_working_set_bytes":  182497280,
+                                                                                "peak_working_set_mib":  174.043,
+                                                                                "private_usage_bytes":  494874624,
+                                                                                "private_usage_mib":  471.949,
+                                                                                "page_fault_count":  49121
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  21,
+                                                                 "ipc_connect_first_frame_ms":  0.846,
+                                                                 "internal_cold_start_ms":  334.478,
+                                                                 "external_cold_start_ms":  346.881,
+                                                                 "frame1_update_cpu_ms":  0.656,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182427648,
+                                                                                "working_set_mib":  173.977,
+                                                                                "peak_working_set_bytes":  182427648,
+                                                                                "peak_working_set_mib":  173.977,
+                                                                                "private_usage_bytes":  495542272,
+                                                                                "private_usage_mib":  472.586,
+                                                                                "page_fault_count":  49083
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  20,
+                                                                 "ipc_connect_first_frame_ms":  0.611,
+                                                                 "internal_cold_start_ms":  326.192,
+                                                                 "external_cold_start_ms":  338.317,
+                                                                 "frame1_update_cpu_ms":  0.704,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182599680,
+                                                                                "working_set_mib":  174.141,
+                                                                                "peak_working_set_bytes":  182599680,
+                                                                                "peak_working_set_mib":  174.141,
+                                                                                "private_usage_bytes":  495140864,
+                                                                                "private_usage_mib":  472.203,
+                                                                                "page_fault_count":  48874
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  20,
+                                                                 "ipc_connect_first_frame_ms":  0.6,
+                                                                 "internal_cold_start_ms":  327.474,
+                                                                 "external_cold_start_ms":  339.903,
+                                                                 "frame1_update_cpu_ms":  0.696,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182620160,
+                                                                                "working_set_mib":  174.16,
+                                                                                "peak_working_set_bytes":  182620160,
+                                                                                "peak_working_set_mib":  174.16,
+                                                                                "private_usage_bytes":  495058944,
+                                                                                "private_usage_mib":  472.125,
+                                                                                "page_fault_count":  49142
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  21,
+                                                                 "ipc_connect_first_frame_ms":  0.618,
+                                                                 "internal_cold_start_ms":  337.703,
+                                                                 "external_cold_start_ms":  350.232,
+                                                                 "frame1_update_cpu_ms":  0.679,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182685696,
+                                                                                "working_set_mib":  174.223,
+                                                                                "peak_working_set_bytes":  182685696,
+                                                                                "peak_working_set_mib":  174.223,
+                                                                                "private_usage_bytes":  495112192,
+                                                                                "private_usage_mib":  472.176,
+                                                                                "page_fault_count":  49308
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  20,
+                                                                 "ipc_connect_first_frame_ms":  0.679,
+                                                                 "internal_cold_start_ms":  330.721,
+                                                                 "external_cold_start_ms":  342.934,
+                                                                 "frame1_update_cpu_ms":  0.666,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182398976,
+                                                                                "working_set_mib":  173.949,
+                                                                                "peak_working_set_bytes":  182489088,
+                                                                                "peak_working_set_mib":  174.035,
+                                                                                "private_usage_bytes":  494292992,
+                                                                                "private_usage_mib":  471.395,
+                                                                                "page_fault_count":  48826
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  20,
+                                                                 "ipc_connect_first_frame_ms":  0.622,
+                                                                 "internal_cold_start_ms":  332.698,
+                                                                 "external_cold_start_ms":  344.563,
+                                                                 "frame1_update_cpu_ms":  0.674,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182702080,
+                                                                                "working_set_mib":  174.238,
+                                                                                "peak_working_set_bytes":  182710272,
+                                                                                "peak_working_set_mib":  174.246,
+                                                                                "private_usage_bytes":  496218112,
+                                                                                "private_usage_mib":  473.23,
+                                                                                "page_fault_count":  49419
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  20,
+                                                                 "ipc_connect_first_frame_ms":  0.65,
+                                                                 "internal_cold_start_ms":  330.8,
+                                                                 "external_cold_start_ms":  343.212,
+                                                                 "frame1_update_cpu_ms":  0.675,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182726656,
+                                                                                "working_set_mib":  174.262,
+                                                                                "peak_working_set_bytes":  182726656,
+                                                                                "peak_working_set_mib":  174.262,
+                                                                                "private_usage_bytes":  496132096,
+                                                                                "private_usage_mib":  473.148,
+                                                                                "page_fault_count":  49304
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  20,
+                                                                 "ipc_connect_first_frame_ms":  0.678,
+                                                                 "internal_cold_start_ms":  329.794,
+                                                                 "external_cold_start_ms":  341.854,
+                                                                 "frame1_update_cpu_ms":  0.663,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182525952,
+                                                                                "working_set_mib":  174.07,
+                                                                                "peak_working_set_bytes":  182525952,
+                                                                                "peak_working_set_mib":  174.07,
+                                                                                "private_usage_bytes":  495534080,
+                                                                                "private_usage_mib":  472.578,
+                                                                                "page_fault_count":  48856
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  20,
+                                                                 "ipc_connect_first_frame_ms":  0.614,
+                                                                 "internal_cold_start_ms":  330.393,
+                                                                 "external_cold_start_ms":  342.199,
+                                                                 "frame1_update_cpu_ms":  0.626,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182444032,
+                                                                                "working_set_mib":  173.992,
+                                                                                "peak_working_set_bytes":  182497280,
+                                                                                "peak_working_set_mib":  174.043,
+                                                                                "private_usage_bytes":  494792704,
+                                                                                "private_usage_mib":  471.871,
+                                                                                "page_fault_count":  49097
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  20,
+                                                                 "ipc_connect_first_frame_ms":  0.661,
+                                                                 "internal_cold_start_ms":  330.164,
+                                                                 "external_cold_start_ms":  342.192,
+                                                                 "frame1_update_cpu_ms":  0.67,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182542336,
+                                                                                "working_set_mib":  174.086,
+                                                                                "peak_working_set_bytes":  182616064,
+                                                                                "peak_working_set_mib":  174.156,
+                                                                                "private_usage_bytes":  495738880,
+                                                                                "private_usage_mib":  472.773,
+                                                                                "page_fault_count":  49108
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  20,
+                                                                 "ipc_connect_first_frame_ms":  0.68,
+                                                                 "internal_cold_start_ms":  332.711,
+                                                                 "external_cold_start_ms":  344.784,
+                                                                 "frame1_update_cpu_ms":  0.651,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182525952,
+                                                                                "working_set_mib":  174.07,
+                                                                                "peak_working_set_bytes":  182587392,
+                                                                                "peak_working_set_mib":  174.129,
+                                                                                "private_usage_bytes":  495493120,
+                                                                                "private_usage_mib":  472.539,
+                                                                                "page_fault_count":  49516
+                                                                            }
+                                                             },
+                                                             {
+                                                                 "mode":  "bench-cold",
+                                                                 "backend":  "wgpu",
+                                                                 "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                                 "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                                 "ipc_mode":  "external_named_pipe",
+                                                                 "initial_ipc_seq":  21,
+                                                                 "ipc_connect_first_frame_ms":  0.671,
+                                                                 "internal_cold_start_ms":  334.755,
+                                                                 "external_cold_start_ms":  347.208,
+                                                                 "frame1_update_cpu_ms":  0.691,
+                                                                 "memory":  {
+                                                                                "working_set_bytes":  182403072,
+                                                                                "working_set_mib":  173.953,
+                                                                                "peak_working_set_bytes":  182427648,
+                                                                                "peak_working_set_mib":  173.977,
+                                                                                "private_usage_bytes":  495255552,
+                                                                                "private_usage_mib":  472.313,
+                                                                                "page_fault_count":  49282
+                                                                            }
+                                                             }
+                                                         ],
+                                       "bench_60fps_5s":  {
+                                                              "mode":  "bench-60fps",
+                                                              "backend":  "wgpu",
+                                                              "gpu_adapter":  "NVIDIA GeForce RTX 4080 SUPER (Dx12)",
+                                                              "ipc_pipe":  "\\\\.\\pipe\\zerovault-bakeoff-egui",
+                                                              "ipc_mode":  "external_named_pipe",
+                                                              "target_ipc_frames":  300,
+                                                              "rendered_ipc_frames":  300,
+                                                              "total_gpu_frames":  601,
+                                                              "elapsed_wall_ms":  4972.061,
+                                                              "achieved_fps":  60.337,
+                                                              "frame_pacing_ms":  {
+                                                                                      "count":  299,
+                                                                                      "min":  4.171,
+                                                                                      "p50":  16.664,
+                                                                                      "p95":  16.736,
+                                                                                      "p99":  16.816,
+                                                                                      "max":  16.921,
+                                                                                      "mean":  16.625
+                                                                                  },
+                                                              "frame_render_cpu_ms":  {
+                                                                                          "count":  600,
+                                                                                          "min":  0.265,
+                                                                                          "p50":  0.527,
+                                                                                          "p95":  0.703,
+                                                                                          "p99":  0.901,
+                                                                                          "max":  13.674,
+                                                                                          "mean":  0.499
+                                                                                      },
+                                                              "memory":  {
+                                                                             "working_set_bytes":  200777728,
+                                                                             "working_set_mib":  191.477,
+                                                                             "peak_working_set_bytes":  200777728,
+                                                                             "peak_working_set_mib":  191.477,
+                                                                             "private_usage_bytes":  504958976,
+                                                                             "private_usage_mib":  481.566,
+                                                                             "page_fault_count":  54093
+                                                                         }
+                                                          },
+                                       "tray_same_binary_mode":  {
+                                                                     "mode":  "bench-tray",
+                                                                     "binary_role":  "single_exe_tray_mode",
+                                                                     "closed_window_ui_process_rss_bytes":  0,
+                                                                     "tray_init_ms":  1.694,
+                                                                     "settle_duration_ms":  400,
+                                                                     "memory":  {
+                                                                                    "working_set_bytes":  12120064,
+                                                                                    "working_set_mib":  11.559,
+                                                                                    "peak_working_set_bytes":  12120064,
+                                                                                    "peak_working_set_mib":  11.559,
+                                                                                    "private_usage_bytes":  2330624,
+                                                                                    "private_usage_mib":  2.223,
+                                                                                    "page_fault_count":  3046
+                                                                                }
+                                                                 },
+                                       "tray_dedicated_helper_exe":  {
+                                                                         "exe_path":  "<workspace>\\target\\swarm\\bakeoff-ui-rust\\egui\\release\\zerovault_tray_egui.exe",
+                                                                         "exe_size_bytes":  433152,
+                                                                         "exe_size_mib":  0.413,
+                                                                         "result":  {
+                                                                                        "mode":  "bench-tray",
+                                                                                        "binary_role":  "dedicated_tray_helper_exe",
+                                                                                        "closed_window_ui_process_rss_bytes":  0,
+                                                                                        "tray_init_ms":  2.202,
+                                                                                        "settle_duration_ms":  400,
+                                                                                        "memory":  {
+                                                                                                       "working_set_bytes":  8433664,
+                                                                                                       "working_set_mib":  8.043,
+                                                                                                       "peak_working_set_bytes":  8433664,
+                                                                                                       "peak_working_set_mib":  8.043,
+                                                                                                       "private_usage_bytes":  1458176,
+                                                                                                       "private_usage_mib":  1.391,
+                                                                                                       "page_fault_count":  2128
+                                                                                                   }
+                                                                                    }
+                                                                     }
+                                   }
+}

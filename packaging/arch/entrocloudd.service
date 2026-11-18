@@ -1,0 +1,36 @@
+[Unit]
+Description=EntroCloud Zero-Knowledge Multi-Cloud Sync, Backup & FUSE3 Daemon
+Documentation=https://cloud.entropy.rs/entrocloud
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/entrocloudd
+Restart=on-failure
+RestartSec=3s
+Environment=RUST_LOG=info
+
+# Pre-create owner-only state, config, and runtime directories before sandboxing
+StateDirectory=entrocloud
+StateDirectoryMode=0700
+ConfigurationDirectory=entrocloud
+ConfigurationDirectoryMode=0700
+RuntimeDirectory=entrocloud
+RuntimeDirectoryMode=0700
+UMask=0077
+
+# Resource & filesystem privilege hardening
+MemoryMax=256M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/entrocloud %h/.config/entrocloud %h/EntroCloud %t
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=default.target

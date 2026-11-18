@@ -1,0 +1,29 @@
+[package]
+name = "entrocloud-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ec"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+dirs = { workspace = true }
+mimalloc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+entrocloud-crypto = { workspace = true }
+entrocloud-daemon = { workspace = true }
+entrocloud-storage = { workspace = true }
+entrocloud-types = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

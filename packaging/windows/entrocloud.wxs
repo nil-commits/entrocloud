@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <?ifndef BinSourceDir ?>
+    <?define BinSourceDir = "..\..\target\release" ?>
+  <?endif?>
+
+  <Package
+    Name="EntroCloud"
+    Manufacturer="cloud.entropy.rs"
+    Version="1.0.0.0"
+    UpgradeCode="4c8e91d2-7f3a-4b5e-8c12-9a4d6e3f2108"
+    Scope="perUser"
+    Compressed="yes">
+
+    <SummaryInformation
+      Description="EntroCloud v1.0 Zero-Knowledge Multi-Cloud Drive &amp; Automatic Folder Backup (Zero-WebView Native Rust)"
+      Manufacturer="cloud.entropy.rs" />
+
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of EntroCloud is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="EntroCloudDir" Name="EntroCloud" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="EntroCloudMenuDir" Name="EntroCloud" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder" />
+
+    <ComponentGroup Id="ProductComponents" Directory="EntroCloudDir">
+      <Component Id="EntroCloudUiExe" Guid="1a7b3c94-5d21-4e68-9b34-2f8c4d1e5011">
+        <File
+          Id="FileEntroCloudExe"
+          Name="EntroCloud.exe"
+          Source="$(var.BinSourceDir)\entrocloud.exe" />
+        <RemoveFolder Id="RemoveEntroCloudDir" Directory="EntroCloudDir" On="uninstall" />
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\cloud.entropy.rs\EntroCloud"
+          Name="UiInstalled"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+
+      <Component Id="EntroCloudDaemonExe" Guid="2b8c4da5-6e32-4f79-ac45-3a9d5e2f6122">
+        <File
+          Id="FileEntroclouddExe"
+          Name="entrocloudd.exe"
+          Source="$(var.BinSourceDir)\entrocloudd.exe" />
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\cloud.entropy.rs\EntroCloud"
+          Name="DaemonInstalled"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+
+      <Component Id="EntroCloudCliExe" Guid="3c9d5eb6-7f43-408a-bd56-4b0e6f3a7233">
+        <File
+          Id="FileEcExe"
+          Name="ec.exe"
+          Source="$(var.BinSourceDir)\ec.exe" />
+        <Environment
+          Id="EntroCloudUserPath"
+          Name="PATH"
+          Value="[EntroCloudDir]"
+          Permanent="no"
+          Part="last"
+          Action="set"
+          System="no" />
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\cloud.entropy.rs\EntroCloud"
+          Name="CliInstalled"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+
+      <Component Id="EntroCloudTrayExe" Guid="4dae6fc7-8054-419b-8e67-5c1f704b8344">
+        <File
+          Id="FileEntrocloudTrayExe"
+          Name="entrocloud-tray.exe"
+          Source="$(var.BinSourceDir)\entrocloud-tray.exe" />
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\Microsoft\Windows\CurrentVersion\Run"
+          Name="EntroCloud"
+          Type="string"
+          Value="&quot;[EntroCloudDir]entrocloud-tray.exe&quot;" />
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\cloud.entropy.rs\EntroCloud"
+          Name="TrayInstalled"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+
+      <Component Id="EntroCloudUriProtocols" Guid="5ebf70d8-9165-42ac-9f78-6d20815c9455">
+        <RemoveRegistryKey
+          Root="HKCU"
+          Key="Software\Classes\ec"
+          Action="removeOnUninstall" />
+        <RegistryKey Root="HKCU" Key="Software\Classes\ec">
+          <RegistryValue
+            Type="string"
+            Value="URL:EntroCloud Share Protocol" />
+          <RegistryValue
+            Name="URL Protocol"
+            Type="string"
+            Value="" />
+        </RegistryKey>
+        <RegistryKey Root="HKCU" Key="Software\Classes\ec\DefaultIcon">
+          <RegistryValue
+            Type="string"
+            Value="&quot;[EntroCloudDir]EntroCloud.exe&quot;,0" />
+        </RegistryKey>
+        <RegistryKey Root="HKCU" Key="Software\Classes\ec\shell\open\command">
+          <RegistryValue
+            Type="string"
+            Value="&quot;[EntroCloudDir]EntroCloud.exe&quot; --open-uri &quot;%1&quot;" />
+        </RegistryKey>
+
+        <RemoveRegistryKey
+          Root="HKCU"
+          Key="Software\Classes\zv"
+          Action="removeOnUninstall" />
+        <RegistryKey Root="HKCU" Key="Software\Classes\zv">
+          <RegistryValue
+            Type="string"
+            Value="URL:EntroCloud Legacy Share Protocol" />
+          <RegistryValue
+            Name="URL Protocol"
+            Type="string"
+            Value="" />
+        </RegistryKey>
+        <RegistryKey Root="HKCU" Key="Software\Classes\zv\DefaultIcon">
+          <RegistryValue
+            Type="string"
+            Value="&quot;[EntroCloudDir]EntroCloud.exe&quot;,0" />
+        </RegistryKey>
+        <RegistryKey Root="HKCU" Key="Software\Classes\zv\shell\open\command">
+          <RegistryValue
+            Type="string"
+            Value="&quot;[EntroCloudDir]EntroCloud.exe&quot; --open-uri &quot;%1&quot;" />
+        </RegistryKey>
+
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\cloud.entropy.rs\EntroCloud"
+          Name="UriProtocolsInstalled"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Component Id="EntroCloudStartMenuShortcuts" Directory="EntroCloudMenuDir" Guid="6fc081e9-a276-43bd-a089-7e31926da566">
+      <Shortcut
+        Id="StartMenuEntroCloudUi"
+        Name="EntroCloud"
+        Description="EntroCloud Zero-Knowledge Multi-Cloud Drive &amp; Automatic Folder Backup"
+        Target="[EntroCloudDir]EntroCloud.exe"
+        WorkingDirectory="EntroCloudDir" />
+      <Shortcut
+        Id="StartMenuEntroCloudTray"
+        Name="EntroCloud Tray"
+        Description="EntroCloud Lightweight System Tray Helper"
+        Target="[EntroCloudDir]entrocloud-tray.exe"
+        WorkingDirectory="EntroCloudDir" />
+      <RemoveFolder Id="RemoveEntroCloudMenuDir" On="uninstall" />
+      <RegistryValue
+        Root="HKCU"
+        Key="Software\cloud.entropy.rs\EntroCloud"
+        Name="StartMenuShortcutInstalled"
+        Type="integer"
+        Value="1"
+        KeyPath="yes" />
+    </Component>
+
+    <Component Id="EntroCloudDesktopShortcut" Directory="DesktopFolder" Guid="70d192fa-b387-44ce-b19a-8f42a37eb677">
+      <Shortcut
+        Id="DesktopEntroCloudUi"
+        Name="EntroCloud"
+        Description="EntroCloud Zero-Knowledge Multi-Cloud Drive &amp; Automatic Folder Backup"
+        Target="[EntroCloudDir]EntroCloud.exe"
+        WorkingDirectory="EntroCloudDir" />
+      <RegistryValue
+        Root="HKCU"
+        Key="Software\cloud.entropy.rs\EntroCloud"
+        Name="DesktopShortcutInstalled"
+        Type="integer"
+        Value="1"
+        KeyPath="yes" />
+    </Component>
+
+    <Feature Id="MainFeature" Title="EntroCloud" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentRef Id="EntroCloudStartMenuShortcuts" />
+      <ComponentRef Id="EntroCloudDesktopShortcut" />
+    </Feature>
+  </Package>
+</Wix>

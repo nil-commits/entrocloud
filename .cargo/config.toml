@@ -1,6 +1,2 @@
-[alias]
-check-linux-vfs = "check -p zerovault-vfs --tests --target x86_64-unknown-linux-musl"
-
-[env]
-# Windows without nasm.exe uses aws-lc-rs prebuilt NASM objects (enabled via Cargo feature).
-CARGO_TERM_COLOR = "always"
+[build]
+rustdocflags = ["-D", "warnings"]

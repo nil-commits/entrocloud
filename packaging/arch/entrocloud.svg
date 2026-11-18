@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="ecShield" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+    <linearGradient id="ecAccent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#10b981"/>
+    </linearGradient>
+  </defs>
+  <path d="M64 8 L112 28 V62 C112 92 91 113 64 122 C37 113 16 92 16 62 V28 Z"
+        fill="url(#ecShield)" stroke="url(#ecAccent)" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M44 68 H84 C91 68 96 63 96 56 C96 50 91 45 85 45 C83 36 74 30 64 30 C53 30 45 37 43 47 C37 48 33 53 33 59 C33 64 38 68 44 68 Z"
+        fill="none" stroke="url(#ecAccent)" stroke-width="4.5" stroke-linejoin="round"/>
+  <circle cx="64" cy="80" r="7" fill="url(#ecAccent)"/>
+  <path d="M60 85 L58 100 H70 L68 85 Z" fill="url(#ecAccent)"/>
+</svg>

@@ -1,0 +1,52 @@
+[package]
+name = "zerovault-ui-egui"
+version = "0.1.0"
+edition = "2021"
+description = "Wave 1 UI Silicon Bake-Off Candidate B2: Pure Rust eframe/egui Native Desktop UI"
+
+[[bin]]
+name = "zerovault_ui_egui"
+path = "src/main.rs"
+
+[[bin]]
+name = "zerovault_tray_egui"
+path = "src/bin/zerovault_tray_egui.rs"
+
+[features]
+default = ["backend-glow"]
+backend-glow = [
+    "eframe/glow",
+    "eframe/default_fonts",
+    "eframe/accesskit",
+]
+backend-wgpu = [
+    "eframe/wgpu",
+    "eframe/default_fonts",
+    "eframe/accesskit",
+    "dep:wgpu",
+]
+
+[dependencies]
+eframe = { version = "0.29.1", default-features = false }
+wgpu = { version = "22.1.0", default-features = false, features = ["dx12", "wgsl"], optional = true }
+tray-icon = { version = "0.26.1", default-features = false }
+parking_lot = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+windows-sys = { version = "0.60", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Performance",
+    "Win32_System_Pipes",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

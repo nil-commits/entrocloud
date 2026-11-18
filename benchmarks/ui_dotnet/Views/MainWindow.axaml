@@ -1,0 +1,308 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:ZeroVaultUi.ViewModels"
+        x:Class="ZeroVaultUi.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        x:CompileBindings="True"
+        Width="1080"
+        Height="740"
+        MinWidth="960"
+        MinHeight="680"
+        WindowStartupLocation="CenterScreen"
+        Background="#0B0F19"
+        Foreground="#F3F4F6"
+        Title="ZeroVault — Status &amp; Settings (NativeAOT)">
+
+  <Grid RowDefinitions="Auto,*,Auto" Margin="20">
+
+    <!-- HEADER: Vault Status, Mount Path, and Post-Quantum Encryption Badge -->
+    <Border Grid.Row="0"
+            Background="#111827"
+            BorderBrush="#1F2937"
+            BorderThickness="1"
+            CornerRadius="10"
+            Padding="18,14"
+            Margin="0,0,0,16">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Grid.Column="0" Spacing="4">
+          <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+            <TextBlock Text="ZeroVault"
+                       FontSize="22"
+                       FontWeight="Bold"
+                       Foreground="#F9FAFB" />
+            <Border Background="{Binding VaultStatusBackground}"
+                    CornerRadius="6"
+                    Padding="10,4"
+                    VerticalAlignment="Center">
+              <TextBlock Text="{Binding VaultStatusBadgeText}"
+                         Foreground="{Binding VaultStatusForeground}"
+                         FontSize="12"
+                         FontWeight="SemiBold" />
+            </Border>
+          </StackPanel>
+          <TextBlock Text="Zero-Trust Multi-Cloud Encrypted Virtual Filesystem • Pure Skia/Win32 NativeAOT"
+                     FontSize="12"
+                     Foreground="#9CA3AF" />
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+          <Border Background="#1E293B"
+                  BorderBrush="#334155"
+                  BorderThickness="1"
+                  CornerRadius="6"
+                  Padding="12,7">
+            <StackPanel Spacing="2">
+              <TextBlock Text="ACTIVE MOUNT" FontSize="10" FontWeight="SemiBold" Foreground="#94A3B8" />
+              <TextBlock Text="{Binding MountPath}" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" />
+            </StackPanel>
+          </Border>
+
+          <Border Background="#1E1B4B"
+                  BorderBrush="#3730A3"
+                  BorderThickness="1"
+                  CornerRadius="6"
+                  Padding="12,7">
+            <StackPanel Spacing="2">
+              <TextBlock Text="CIPHER SUITE" FontSize="10" FontWeight="SemiBold" Foreground="#A5B4FC" />
+              <TextBlock Text="{Binding EncryptionBadgeText}" FontSize="13" FontWeight="Bold" Foreground="#C7D2FE" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- MAIN BODY: Live Transfer Meter + Multi-Cloud Quotas + Settings -->
+    <Grid Grid.Row="1" ColumnDefinitions="1.45*,1*">
+
+      <!-- LEFT COLUMN: Live Transfer Meter & 3-Provider Multi-Cloud Quota Cards -->
+      <Grid Grid.Column="0" RowDefinitions="Auto,*" Margin="0,0,14,0">
+
+        <!-- Live Transfer Meter Panel -->
+        <Border Grid.Row="0"
+                Background="#111827"
+                BorderBrush="#1F2937"
+                BorderThickness="1"
+                CornerRadius="10"
+                Padding="18,16"
+                Margin="0,0,0,14">
+          <StackPanel Spacing="14">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0"
+                         Text="Live Transfer Telemetry"
+                         FontSize="16"
+                         FontWeight="SemiBold"
+                         Foreground="#F9FAFB" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
+                <Border Background="#1F2937" CornerRadius="5" Padding="8,3">
+                  <TextBlock Text="{Binding ActiveChunksText}" FontSize="12" Foreground="#60A5FA" FontWeight="SemiBold" />
+                </Border>
+                <Border Background="#1F2937" CornerRadius="5" Padding="8,3">
+                  <TextBlock Text="{Binding FrameSequenceText}" FontSize="12" Foreground="#9CA3AF" />
+                </Border>
+              </StackPanel>
+            </Grid>
+
+            <!-- Upload Meter -->
+            <StackPanel Spacing="5">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="Encrypted Upload Stream (VAES Chunking)" FontSize="12" Foreground="#9CA3AF" />
+                <TextBlock Grid.Column="1" Text="{Binding UploadThroughputText}" FontSize="14" FontWeight="Bold" Foreground="#34D399" />
+              </Grid>
+              <ProgressBar Minimum="0" Maximum="100" Value="{Binding UploadBarPercent}" Height="10" Foreground="#10B981" Background="#1F2937" CornerRadius="5" />
+            </StackPanel>
+
+            <!-- Download Meter -->
+            <StackPanel Spacing="5">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="Authenticated Download Stream (Parallel Reassembly)" FontSize="12" Foreground="#9CA3AF" />
+                <TextBlock Grid.Column="1" Text="{Binding DownloadThroughputText}" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" />
+              </Grid>
+              <ProgressBar Minimum="0" Maximum="100" Value="{Binding DownloadBarPercent}" Height="10" Foreground="#0EA5E9" Background="#1F2937" CornerRadius="5" />
+            </StackPanel>
+
+            <!-- Sync Batch Progress -->
+            <StackPanel Spacing="5">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="Active Merkle Tree Commit Progress" FontSize="12" Foreground="#9CA3AF" />
+                <TextBlock Grid.Column="1" Text="{Binding TransferProgressText}" FontSize="13" FontWeight="SemiBold" Foreground="#E5E7EB" />
+              </Grid>
+              <ProgressBar Minimum="0" Maximum="100" Value="{Binding TransferProgressPercent}" Height="8" Foreground="#818CF8" Background="#1F2937" CornerRadius="4" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- 3-Provider Multi-Cloud Quota Cards -->
+        <Border Grid.Row="1"
+                Background="#111827"
+                BorderBrush="#1F2937"
+                BorderThickness="1"
+                CornerRadius="10"
+                Padding="18,16">
+          <StackPanel Spacing="12">
+            <TextBlock Text="Multi-Cloud Backend Storage Quotas"
+                       FontSize="16"
+                       FontWeight="SemiBold"
+                       Foreground="#F9FAFB" />
+
+            <!-- Card 1: Google Drive -->
+            <Border Background="#0F172A" BorderBrush="#1E293B" BorderThickness="1" CornerRadius="8" Padding="14,10">
+              <StackPanel Spacing="6">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Grid.Column="0" Text="Google Drive (Workspace Shard Pool)" FontWeight="SemiBold" FontSize="13" Foreground="#F3F4F6" />
+                  <TextBlock Grid.Column="1" Text="{Binding GDriveRateText}" FontSize="12" Foreground="#34D399" />
+                </Grid>
+                <ProgressBar Minimum="0" Maximum="100" Value="{Binding GDrivePercent}" Height="7" Foreground="#3B82F6" Background="#1E293B" CornerRadius="4" />
+                <TextBlock Text="{Binding GDriveUsageText}" FontSize="11" Foreground="#94A3B8" />
+              </StackPanel>
+            </Border>
+
+            <!-- Card 2: Microsoft OneDrive -->
+            <Border Background="#0F172A" BorderBrush="#1E293B" BorderThickness="1" CornerRadius="8" Padding="14,10">
+              <StackPanel Spacing="6">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Grid.Column="0" Text="Microsoft OneDrive (Graph API v1.0)" FontWeight="SemiBold" FontSize="13" Foreground="#F3F4F6" />
+                  <TextBlock Grid.Column="1" Text="{Binding OneDriveRateText}" FontSize="12" Foreground="#38BDF8" />
+                </Grid>
+                <ProgressBar Minimum="0" Maximum="100" Value="{Binding OneDrivePercent}" Height="7" Foreground="#06B6D4" Background="#1E293B" CornerRadius="4" />
+                <TextBlock Text="{Binding OneDriveUsageText}" FontSize="11" Foreground="#94A3B8" />
+              </StackPanel>
+            </Border>
+
+            <!-- Card 3: Amazon S3 -->
+            <Border Background="#0F172A" BorderBrush="#1E293B" BorderThickness="1" CornerRadius="8" Padding="14,10">
+              <StackPanel Spacing="6">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Grid.Column="0" Text="Amazon S3 (Object-Lock Vault Bucket)" FontWeight="SemiBold" FontSize="13" Foreground="#F3F4F6" />
+                  <TextBlock Grid.Column="1" Text="{Binding S3RateText}" FontSize="12" Foreground="#A78BFA" />
+                </Grid>
+                <ProgressBar Minimum="0" Maximum="100" Value="{Binding S3Percent}" Height="7" Foreground="#8B5CF6" Background="#1E293B" CornerRadius="4" />
+                <TextBlock Text="{Binding S3UsageText}" FontSize="11" Foreground="#94A3B8" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <!-- RIGHT COLUMN: Vault Settings & Policy Controls -->
+      <Border Grid.Column="1"
+              Background="#111827"
+              BorderBrush="#1F2937"
+              BorderThickness="1"
+              CornerRadius="10"
+              Padding="20,18">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <StackPanel Grid.Row="0" Spacing="18">
+            <StackPanel Spacing="4">
+              <TextBlock Text="Vault Policy &amp; Settings"
+                         FontSize="16"
+                         FontWeight="SemiBold"
+                         Foreground="#F9FAFB" />
+              <TextBlock Text="Real-time chunk distribution, local staging quota, and master key lifecycle."
+                         FontSize="12"
+                         Foreground="#9CA3AF"
+                         TextWrapping="Wrap" />
+            </StackPanel>
+
+            <!-- Routing Policy Selector -->
+            <StackPanel Spacing="8">
+              <TextBlock Text="Multi-Cloud Routing Policy"
+                         FontSize="13"
+                         FontWeight="SemiBold"
+                         Foreground="#E5E7EB" />
+              <ComboBox ItemsSource="{Binding RoutingPolicies}"
+                        SelectedIndex="{Binding SelectedRoutingPolicyIndex, Mode=TwoWay}"
+                        HorizontalAlignment="Stretch"
+                        Background="#0F172A"
+                        BorderBrush="#334155">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="x:String">
+                    <TextBlock Text="{Binding}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <Border Background="#0F172A" BorderBrush="#1E293B" BorderThickness="1" CornerRadius="6" Padding="10,8">
+                <TextBlock Text="{Binding RoutingPolicyDescription}"
+                           FontSize="11"
+                           Foreground="#94A3B8"
+                           TextWrapping="Wrap" />
+              </Border>
+            </StackPanel>
+
+            <!-- Cache Limit Slider -->
+            <StackPanel Spacing="8">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0"
+                           Text="Encrypted Staging Cache"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           Foreground="#E5E7EB" />
+                <TextBlock Grid.Column="1"
+                           Text="{Binding CacheLimitText}"
+                           FontSize="12"
+                           FontWeight="SemiBold"
+                           Foreground="#38BDF8" />
+              </Grid>
+              <Slider Minimum="1"
+                      Maximum="64"
+                      TickFrequency="1"
+                      IsSnapToTickEnabled="True"
+                      Value="{Binding CacheLimitGib, Mode=TwoWay}" />
+              <Grid ColumnDefinitions="Auto,*,Auto">
+                <TextBlock Grid.Column="0" Text="1 GiB" FontSize="11" Foreground="#6B7280" />
+                <TextBlock Grid.Column="2" Text="64 GiB" FontSize="11" Foreground="#6B7280" />
+              </Grid>
+            </StackPanel>
+
+            <!-- Post-Quantum Key Hygiene Info -->
+            <Border Background="#0F172A" BorderBrush="#1E293B" BorderThickness="1" CornerRadius="8" Padding="12,10">
+              <StackPanel Spacing="4">
+                <TextBlock Text="Zero-Trust Key Isolation" FontSize="12" FontWeight="SemiBold" Foreground="#D1D5DB" />
+                <TextBlock Text="Master DEK wrapped via hybrid X25519 + ML-KEM-768 in VirtualLock pinned pages. Locking unmounts Z:\ZeroVault and zeroizes key material."
+                           FontSize="11"
+                           Foreground="#9CA3AF"
+                           TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+
+          <!-- Lock Vault Action Button -->
+          <StackPanel Grid.Row="2" Spacing="10">
+            <Button Command="{Binding ToggleVaultLockCommand}"
+                    Content="{Binding LockButtonText}"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Padding="14,11"
+                    Background="#DC2626"
+                    Foreground="#FFFFFF"
+                    FontWeight="Bold"
+                    CornerRadius="8" />
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <!-- FOOTER: Named Pipe IPC Telemetry Status -->
+    <Border Grid.Row="2"
+            Background="#0F172A"
+            BorderBrush="#1E293B"
+            BorderThickness="1"
+            CornerRadius="8"
+            Padding="14,8"
+            Margin="0,14,0,0">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Grid.Column="0"
+                   Text="{Binding IpcStatusText}"
+                   FontSize="12"
+                   Foreground="#94A3B8"
+                   VerticalAlignment="Center" />
+        <TextBlock Grid.Column="1"
+                   Text="Renderer: Avalonia Skia GPU • 0 WebView2 DLLs"
+                   FontSize="12"
+                   Foreground="#6EE7B7"
+                   FontWeight="SemiBold"
+                   VerticalAlignment="Center" />
+      </Grid>
+    </Border>
+
+  </Grid>
+</Window>

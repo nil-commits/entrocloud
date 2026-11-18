@@ -1,59 +1,110 @@
 # Maintainer: cloud.entropy.rs <ops@cloud.entropy.rs>
-pkgname=zerovault
-pkgver=0.1.0
+pkgname=entrocloud
+pkgver=1.0.0
 pkgrel=1
-pkgdesc="Zero-knowledge multi-cloud encrypted virtual drive (daemon, CLI, and tray UI)"
+pkgdesc="Zero-knowledge multi-cloud encrypted virtual filesystem and automatic folder backup suite (daemon, CLI, pure-Rust GPU UI, and tray helper)"
 arch=('x86_64' 'aarch64')
-url="https://cloud.entropy.rs/zerovault"
+url="https://cloud.entropy.rs/entrocloud"
 license=('MIT' 'Apache-2.0')
 depends=(
   'fuse3'
-  'gtk3'
-  'libayatana-appindicator'
+  'gcc-libs'
+  'glibc'
   'libsecret'
-  'webkit2gtk-4.1'
+  'libglvnd'
+  'wayland'
+  'libxkbcommon'
 )
 makedepends=(
   'cargo'
   'cmake'
-  'nasm'
-  'pkgconf'
-  'rust'
 )
-source=("${pkgname}-${pkgver}.tar.gz")
-sha256sums=('SKIP')
+optdepends=(
+  'attr: getfattr and setfattr utilities for FUSE3 extended attribute pinning'
+  'xdg-desktop-portal: native desktop file and folder picker dialogs'
+)
+source=(
+  'entrocloudd.service'
+  'entrocloud-tray.service'
+  'entrocloud.desktop'
+  'entrocloud.svg'
+)
+sha256sums=(
+  'SKIP'
+  'SKIP'
+  'SKIP'
+  'SKIP'
+)
+
+_resolve_workspace_root() {
+  if [[ -f "${srcdir}/${pkgname}-${pkgver}/Cargo.toml" ]]; then
+    printf '%s\n' "${srcdir}/${pkgname}-${pkgver}"
+  else
+    (cd "${startdir}/../.." && pwd)
+  fi
+}
 
 prepare() {
-  cd "${srcdir}/${pkgname}-${pkgver}" || cd "${startdir}/../.."
+  local ws_root
+  ws_root="$(_resolve_workspace_root)"
+  cd "${ws_root}"
   export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}"
-  cargo fetch --locked --target "${CARCH}-unknown-linux-gnu" || true
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
 }
 
 build() {
-  cd "${srcdir}/${pkgname}-${pkgver}" || cd "${startdir}/../.."
+  local ws_root
+  ws_root="$(_resolve_workspace_root)"
+  cd "${ws_root}"
   export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}"
   cargo build --release --locked \
-    -p zerovault-daemon \
-    -p zerovault-cli \
-    -p zerovault-ui
+    -p entrocloud-daemon \
+    -p entrocloud-cli \
+    -p entrocloud-ui
 }
 
 package() {
-  cd "${srcdir}/${pkgname}-${pkgver}" || cd "${startdir}/../.."
-  local target_dir="${CARGO_TARGET_DIR:-target}/release"
+  local ws_root target_dir
+  ws_root="$(_resolve_workspace_root)"
+  target_dir="${ws_root}/${CARGO_TARGET_DIR:-target}/release"
+  if [[ "${CARGO_TARGET_DIR:-}" == /* ]]; then
+    target_dir="${CARGO_TARGET_DIR}/release"
+  fi
 
-  install -Dm755 "${target_dir}/zerovaultd" "${pkgdir}/usr/bin/zerovaultd"
-  install -Dm755 "${target_dir}/zv" "${pkgdir}/usr/bin/zv"
-  install -Dm755 "${target_dir}/zerovault-ui" "${pkgdir}/usr/bin/zerovault-ui"
+  install -Dm755 "${target_dir}/entrocloudd" "${pkgdir}/usr/bin/entrocloudd"
+  install -Dm755 "${target_dir}/ec" "${pkgdir}/usr/bin/ec"
+  install -Dm755 "${target_dir}/entrocloud" "${pkgdir}/usr/bin/entrocloud"
+  install -Dm755 "${target_dir}/entrocloud-tray" "${pkgdir}/usr/bin/entrocloud-tray"
 
-  install -Dm644 "packaging/arch/zerovaultd.service" \
-    "${pkgdir}/usr/lib/systemd/user/zerovaultd.service"
-  install -Dm644 "packaging/arch/zerovault.desktop" \
-    "${pkgdir}/usr/share/applications/zerovault.desktop"
+  install -Dm644 "${srcdir}/entrocloudd.service" \
+    "${pkgdir}/usr/lib/systemd/user/entrocloudd.service"
+  install -Dm644 "${srcdir}/entrocloud-tray.service" \
+    "${pkgdir}/usr/lib/systemd/user/entrocloud-tray.service"
+  install -Dm644 "${srcdir}/entrocloud.desktop" \
+    "${pkgdir}/usr/share/applications/entrocloud.desktop"
+  install -Dm644 "${srcdir}/entrocloud.svg" \
+    "${pkgdir}/usr/share/icons/hicolor/scalable/apps/entrocloud.svg"
 
-  install -Dm644 "crates/zerovault-ui/icons/32x32.png" \
-    "${pkgdir}/usr/share/icons/hicolor/32x32/apps/zerovault.png"
-  install -Dm644 "crates/zerovault-ui/icons/128x128.png" \
-    "${pkgdir}/usr/share/icons/hicolor/128x128/apps/zerovault.png"
+  if [[ -f "${ws_root}/crates/entrocloud-ui/icons/32x32.png" ]]; then
+    install -Dm644 "${ws_root}/crates/entrocloud-ui/icons/32x32.png" \
+      "${pkgdir}/usr/share/icons/hicolor/32x32/apps/entrocloud.png"
+  fi
+  if [[ -f "${ws_root}/crates/entrocloud-ui/icons/128x128.png" ]]; then
+    install -Dm644 "${ws_root}/crates/entrocloud-ui/icons/128x128.png" \
+      "${pkgdir}/usr/share/icons/hicolor/128x128/apps/entrocloud.png"
+  fi
+
+  if [[ -f "${ws_root}/README.md" ]]; then
+    install -Dm644 "${ws_root}/README.md" \
+      "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+  fi
+  if [[ -f "${ws_root}/GOOGLE-DRIVE-SETUP.md" ]]; then
+    install -Dm644 "${ws_root}/GOOGLE-DRIVE-SETUP.md" \
+      "${pkgdir}/usr/share/doc/${pkgname}/GOOGLE-DRIVE-SETUP.md"
+  fi
+  if [[ -f "${ws_root}/SPEC_CRYPTO.md" ]]; then
+    install -Dm644 "${ws_root}/SPEC_CRYPTO.md" \
+      "${pkgdir}/usr/share/doc/${pkgname}/SPEC_CRYPTO.md"
+  fi
 }

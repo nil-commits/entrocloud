@@ -1,0 +1,286 @@
+{
+  "gate": "Wave 4 Gate 5 — UI Zero-Bloat, Process Tree & zv:// URI Adversarial Verification",
+  "auditor": "Agent-Judge (Adversarial Red-Team & Proof Verifier)",
+  "timestamp_utc": "2026-11-17T21:06:00Z",
+  "verdict": "PASS",
+  "active_vetoes": 0,
+  "resolved_veto_history": [
+    {
+      "id": "W4-VETO-01",
+      "status": "RESOLVED_AND_VERIFIED",
+      "remediation": "metrics.rs::is_forbidden_browser_module_name refactored to 0x5A-XOR-masked byte patterns (black_box(0x5Au8)) leaving 0 raw browser marker strings in .rdata; bundle-portable.ps1 Assert-ZeroWebViewBinary empirically passes on both zerovault-ui.exe and zerovault-tray.exe while rejecting legacy WebView2 Zerovault.exe ('WebView2Loader.dll')."
+    },
+    {
+      "id": "W4-VETO-02",
+      "status": "RESOLVED_AND_VERIFIED",
+      "remediation": "Added #![cfg_attr(not(debug_assertions), windows_subsystem = \"windows\")] to main.rs and zerovault_tray.rs; dumpbin /headers confirms '2 subsystem (Windows GUI)' on both binaries, and live Win32_Process tree confirms strictly 0 child processes (conhost=0, webview2=0)."
+    }
+  ],
+  "summary_verdict_breakdown": {
+    "zero_webview_architecture_and_pe_imports": "PASS",
+    "static_unwrap_expect_panic_todo_audit": "PASS",
+    "cargo_tree_zero_browser_dependencies_win_and_linux": "PASS",
+    "cold_window_open_latency_and_rss_20x": "PASS",
+    "live_process_tree_zero_children_and_zero_post_close_rss": "PASS",
+    "tray_companion_rss_and_zero_children": "PASS",
+    "zv_uri_protocol_arch_and_windows_plus_cli_tests": "PASS",
+    "windows_portable_bundler_positive_and_negative_control": "PASS",
+    "windows_pe_gui_subsystem_attribute": "PASS",
+    "readonly_baseline_integrity": "PASS"
+  },
+  "host": {
+    "cpu": "AMD Ryzen 9 7950X3D (16C/32T)",
+    "gpu": "NVIDIA GeForce RTX 4080 SUPER/PCIe/SSE2 [3.3.0 NVIDIA 621.01]",
+    "os": "Microsoft Windows NT 10.0.26300.0 (x86_64-pc-windows-msvc)",
+    "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+    "cargo_target_dir": "<workspace>\\target\\swarm\\judge\\w4-ui",
+    "qpc_frequency_hz": 10000000
+  },
+  "readonly_baseline": {
+    "mutations": 0,
+    "trees": [
+      {
+        "name": "cloudbridge",
+        "files": 37,
+        "bytes": 89165156,
+        "tree_sha256": "43ADD08E502AC76DF469BDCEF9C8DC11914880DB8288C28C204345E69AE5B05F",
+        "matched": true
+      },
+      {
+        "name": "cloudbridge linux",
+        "files": 65,
+        "bytes": 178010385,
+        "tree_sha256": "32DB719E53848B03BBDAC67B33423DE9D4161F660FBFF91A1B005126CE31554F",
+        "matched": true
+      },
+      {
+        "name": "zerovault",
+        "files": 82,
+        "bytes": 31590808,
+        "tree_sha256": "383752380A143E34B124F1CA365BD6D5F9F43C570DE0E8D89D00C0632FB4D51D",
+        "matched": true
+      }
+    ]
+  },
+  "static_audit": {
+    "production_rs_files_scanned": 11,
+    "unwrap_hits": 0,
+    "expect_hits": 0,
+    "panic_hits": 0,
+    "todo_hits": 0,
+    "unimplemented_hits": 0,
+    "cargo_toml_lock_webview_hits": 0,
+    "cargo_tree_windows_lines": 465,
+    "cargo_tree_windows_forbidden_hits": 0,
+    "cargo_tree_linux_lines": 925,
+    "cargo_tree_linux_forbidden_hits": 0,
+    "clippy_exit_code": 0,
+    "clippy_warnings": 0
+  },
+  "binaries": {
+    "release_build_command": "cargo build --release --manifest-path \"<workspace>\\Cargo.toml\" -p zerovault-ui --locked",
+    "release_build_exit_code": 0,
+    "release_build_elapsed_ms": 26970.541,
+    "zerovault_ui_exe": {
+      "path": "<workspace>\\target\\swarm\\judge\\w4-ui\\release\\zerovault-ui.exe",
+      "bytes": 5748224,
+      "mib": 5.482,
+      "sha256": "595c73b5133d026863225d751abceb0541dcae7a9bfd635060d19b919cfb00ae",
+      "pe_subsystem": "2 (Windows GUI)",
+      "dumpbin_imported_dlls": [
+        "oleaut32.dll",
+        "kernel32.dll",
+        "user32.dll",
+        "advapi32.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "shell32.dll",
+        "combase.dll",
+        "ole32.dll",
+        "ntdll.dll",
+        "shlwapi.dll",
+        "bcryptprimitives.dll",
+        "uiautomationcore.dll",
+        "ws2_32.dll",
+        "gdi32.dll",
+        "uxtheme.dll",
+        "USER32.dll",
+        "opengl32.dll",
+        "imm32.dll",
+        "dwmapi.dll",
+        "VCRUNTIME140.dll",
+        "VCRUNTIME140_1.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll"
+      ],
+      "webview_imported_dll_count": 0,
+      "raw_forbidden_ascii_markers": 0,
+      "bundle_portable_assert": "PASS"
+    },
+    "zerovault_tray_exe": {
+      "path": "<workspace>\\target\\swarm\\judge\\w4-ui\\release\\zerovault-tray.exe",
+      "bytes": 849408,
+      "mib": 0.81,
+      "sha256": "b1712a0a1b562d33a7a0f59bf7ebb0b1988676503082a2394bb644a8bd7e627e",
+      "pe_subsystem": "2 (Windows GUI)",
+      "dumpbin_imported_dlls": [
+        "shell32.dll",
+        "combase.dll",
+        "kernel32.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "gdi32.dll",
+        "user32.dll",
+        "comctl32.dll",
+        "ws2_32.dll",
+        "ntdll.dll",
+        "advapi32.dll",
+        "bcryptprimitives.dll",
+        "VCRUNTIME140.dll",
+        "VCRUNTIME140_1.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll"
+      ],
+      "webview_imported_dll_count": 0,
+      "raw_forbidden_ascii_markers": 0,
+      "bundle_portable_assert": "PASS"
+    },
+    "negative_control_legacy_webview2_exe": {
+      "path": "<donor-root>\\zerovault\\Zerovault.exe",
+      "bundle_portable_assert": "REJECTED_AS_EXPECTED",
+      "exception": "ZERO-WEBVIEW STRING AUDIT FAILED: '<donor-root>\\zerovault\\Zerovault.exe' contains embedded runtime marker 'WebView2Loader.dll'."
+    }
+  },
+  "cold_window_benchmark_20x": {
+    "runs_count": 20,
+    "all_exited_zero": true,
+    "all_zero_webview2_modules": true,
+    "internal_cold_open_latency_ms": {
+      "min": 140.075,
+      "p50": 149.33,
+      "p95": 179.065,
+      "max": 194.39,
+      "mean": 153.588
+    },
+    "external_spawn_to_frame1_latency_ms": {
+      "min": 153.475,
+      "p50": 163.382,
+      "p95": 194.458,
+      "max": 210.199,
+      "mean": 167.953
+    },
+    "working_set_64_mib": {
+      "min": 69.535,
+      "p50": 69.637,
+      "p95": 69.711,
+      "max": 69.738,
+      "mean": 69.644
+    },
+    "private_usage_mib": {
+      "min": 80.652,
+      "p50": 81.404,
+      "p95": 82.109,
+      "max": 82.367,
+      "mean": 81.425
+    },
+    "runs": [
+      { "run": 1, "exit_code": 0, "cold_open_latency_ms": 162.686, "external_cold_start_ms": 183.736, "frame1_update_cpu_ms": 0.388, "working_set_64": 73076736, "working_set_mib": 69.691, "private_usage_mib": 80.652, "webview2_modules": 0 },
+      { "run": 2, "exit_code": 0, "cold_open_latency_ms": 155.621, "external_cold_start_ms": 169.798, "frame1_update_cpu_ms": 0.417, "working_set_64": 73064448, "working_set_mib": 69.68, "private_usage_mib": 81.102, "webview2_modules": 0 },
+      { "run": 3, "exit_code": 0, "cold_open_latency_ms": 194.39, "external_cold_start_ms": 210.199, "frame1_update_cpu_ms": 0.392, "working_set_64": 73019392, "working_set_mib": 69.637, "private_usage_mib": 82.109, "webview2_modules": 0 },
+      { "run": 4, "exit_code": 0, "cold_open_latency_ms": 166.586, "external_cold_start_ms": 182.174, "frame1_update_cpu_ms": 0.387, "working_set_64": 73019392, "working_set_mib": 69.637, "private_usage_mib": 82.367, "webview2_modules": 0 },
+      { "run": 5, "exit_code": 0, "cold_open_latency_ms": 150.998, "external_cold_start_ms": 165.626, "frame1_update_cpu_ms": 0.38, "working_set_64": 73023488, "working_set_mib": 69.641, "private_usage_mib": 81.434, "webview2_modules": 0 },
+      { "run": 6, "exit_code": 0, "cold_open_latency_ms": 153.165, "external_cold_start_ms": 166.915, "frame1_update_cpu_ms": 0.405, "working_set_64": 72970240, "working_set_mib": 69.59, "private_usage_mib": 81.809, "webview2_modules": 0 },
+      { "run": 7, "exit_code": 0, "cold_open_latency_ms": 179.065, "external_cold_start_ms": 194.458, "frame1_update_cpu_ms": 0.393, "working_set_64": 73031680, "working_set_mib": 69.648, "private_usage_mib": 80.715, "webview2_modules": 0 },
+      { "run": 8, "exit_code": 0, "cold_open_latency_ms": 164.557, "external_cold_start_ms": 179.319, "frame1_update_cpu_ms": 0.398, "working_set_64": 73125888, "working_set_mib": 69.738, "private_usage_mib": 80.953, "webview2_modules": 0 },
+      { "run": 9, "exit_code": 0, "cold_open_latency_ms": 153.688, "external_cold_start_ms": 168.795, "frame1_update_cpu_ms": 0.376, "working_set_64": 73019392, "working_set_mib": 69.637, "private_usage_mib": 81.379, "webview2_modules": 0 },
+      { "run": 10, "exit_code": 0, "cold_open_latency_ms": 141.035, "external_cold_start_ms": 154.197, "frame1_update_cpu_ms": 0.382, "working_set_64": 73011200, "working_set_mib": 69.629, "private_usage_mib": 81.387, "webview2_modules": 0 },
+      { "run": 11, "exit_code": 0, "cold_open_latency_ms": 147.413, "external_cold_start_ms": 160.504, "frame1_update_cpu_ms": 0.375, "working_set_64": 72994816, "working_set_mib": 69.613, "private_usage_mib": 82.008, "webview2_modules": 0 },
+      { "run": 12, "exit_code": 0, "cold_open_latency_ms": 142.166, "external_cold_start_ms": 155.523, "frame1_update_cpu_ms": 0.396, "working_set_64": 72912896, "working_set_mib": 69.535, "private_usage_mib": 82.023, "webview2_modules": 0 },
+      { "run": 13, "exit_code": 0, "cold_open_latency_ms": 146.836, "external_cold_start_ms": 159.766, "frame1_update_cpu_ms": 0.405, "working_set_64": 73019392, "working_set_mib": 69.637, "private_usage_mib": 81.633, "webview2_modules": 0 },
+      { "run": 14, "exit_code": 0, "cold_open_latency_ms": 142.5, "external_cold_start_ms": 155.57, "frame1_update_cpu_ms": 0.396, "working_set_64": 73097216, "working_set_mib": 69.711, "private_usage_mib": 80.738, "webview2_modules": 0 },
+      { "run": 15, "exit_code": 0, "cold_open_latency_ms": 147.663, "external_cold_start_ms": 161.137, "frame1_update_cpu_ms": 0.383, "working_set_64": 73019392, "working_set_mib": 69.637, "private_usage_mib": 82.063, "webview2_modules": 0 },
+      { "run": 16, "exit_code": 0, "cold_open_latency_ms": 140.883, "external_cold_start_ms": 154.226, "frame1_update_cpu_ms": 0.373, "working_set_64": 73003008, "working_set_mib": 69.621, "private_usage_mib": 81.301, "webview2_modules": 0 },
+      { "run": 17, "exit_code": 0, "cold_open_latency_ms": 146.323, "external_cold_start_ms": 160.963, "frame1_update_cpu_ms": 0.375, "working_set_64": 73039872, "working_set_mib": 69.656, "private_usage_mib": 81.801, "webview2_modules": 0 },
+      { "run": 18, "exit_code": 0, "cold_open_latency_ms": 140.075, "external_cold_start_ms": 153.475, "frame1_update_cpu_ms": 0.375, "working_set_64": 72986624, "working_set_mib": 69.605, "private_usage_mib": 80.848, "webview2_modules": 0 },
+      { "run": 19, "exit_code": 0, "cold_open_latency_ms": 143.283, "external_cold_start_ms": 156.411, "frame1_update_cpu_ms": 0.392, "working_set_64": 73060352, "working_set_mib": 69.676, "private_usage_mib": 81.422, "webview2_modules": 0 },
+      { "run": 20, "exit_code": 0, "cold_open_latency_ms": 152.828, "external_cold_start_ms": 166.26, "frame1_update_cpu_ms": 0.425, "working_set_64": 73052160, "working_set_mib": 69.668, "private_usage_mib": 80.758, "webview2_modules": 0 }
+    ]
+  },
+  "live_interactive_process_tree_audit": {
+    "launch_method": "Start-Process -FilePath zerovault-ui.exe -ArgumentList '--no-autostart' -PassThru",
+    "hold_duration_ms": 1000,
+    "ui_pid": 48424,
+    "window_hwnd": 30412060,
+    "window_title": "ZeroVault Studio — Zero-Knowledge Multi-Cloud Vault",
+    "live_working_set_bytes": 90976256,
+    "live_working_set_mib": 86.762,
+    "live_private_bytes": 90411008,
+    "live_private_mib": 86.223,
+    "loaded_modules_total": 91,
+    "forbidden_webview_modules_loaded": 0,
+    "child_process_count": 0,
+    "conhost_child_processes": 0,
+    "webview2_webkit_cef_child_processes": 0,
+    "wm_close_graceful_shutdown_ms": 81.737,
+    "wm_close_exit_code": 0,
+    "post_close_zerovault_ui_processes": 0,
+    "post_close_background_ui_rss_bytes": 0
+  },
+  "tray_benchmark_5x": {
+    "settle_duration_ms": 400,
+    "working_set_mib_min": 8.754,
+    "working_set_mib_p50": 8.758,
+    "working_set_mib_max": 8.758,
+    "private_usage_mib_p50": 4.727,
+    "tray_init_ms_p50": 1.751,
+    "loaded_modules_total": 25,
+    "child_process_count": 0,
+    "webview2_modules": 0,
+    "closed_window_ui_process_rss_bytes": 0,
+    "runs": [
+      { "run": 1, "exit_code": 0, "tray_init_ms": 1.909, "working_set_64": 9183232, "working_set_mib": 8.758, "private_usage_mib": 4.727, "webview2_modules": 0 },
+      { "run": 2, "exit_code": 0, "tray_init_ms": 1.738, "working_set_64": 9183232, "working_set_mib": 8.758, "private_usage_mib": 4.758, "webview2_modules": 0 },
+      { "run": 3, "exit_code": 0, "tray_init_ms": 1.675, "working_set_64": 9183232, "working_set_mib": 8.758, "private_usage_mib": 4.75, "webview2_modules": 0 },
+      { "run": 4, "exit_code": 0, "tray_init_ms": 1.815, "working_set_64": 9179136, "working_set_mib": 8.754, "private_usage_mib": 4.707, "webview2_modules": 0 },
+      { "run": 5, "exit_code": 0, "tray_init_ms": 1.751, "working_set_64": 9183232, "working_set_mib": 8.758, "private_usage_mib": 4.719, "webview2_modules": 0 }
+    ]
+  },
+  "uri_and_packaging_verification": {
+    "arch_desktop_entry": {
+      "path": "packaging/arch/zerovault.desktop",
+      "exec": "/usr/bin/zerovault-ui %u",
+      "mime_type": "x-scheme-handler/zv;",
+      "verified": true
+    },
+    "arch_pkgbuild": {
+      "path": "packaging/arch/PKGBUILD",
+      "depends": ["fuse3", "gcc-libs", "glibc", "libsecret", "libglvnd", "wayland", "libxkbcommon"],
+      "webkit2gtk_present": false,
+      "verified": true
+    },
+    "windows_uri_handler": {
+      "register_script": "packaging/windows/register-uri.ps1",
+      "wix_manifest": "packaging/windows/zerovault.wxs",
+      "registry_root": "HKCU\\Software\\Classes\\zv",
+      "command_template": "\"<UiExePath>\" --open-uri \"%1\"",
+      "uac_elevation_required": false,
+      "verified": true
+    },
+    "cargo_test_suite": {
+      "command": "cargo test --manifest-path \"<workspace>\\Cargo.toml\" -p zerovault-ui --locked",
+      "exit_code": 0,
+      "elapsed_ms": 6872.968,
+      "tests_passed": 8,
+      "tests_failed": 0,
+      "adversarial_malformed_open_uri_exit_code": 2,
+      "adversarial_non_loopback_ipc_exit_code": 2
+    }
+  }
+}

@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)..\..\target\swarm\bakeoff-ui-dotnet\obj\</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>$(MSBuildThisFileDirectory)..\..\target\swarm\bakeoff-ui-dotnet\obj\</MSBuildProjectExtensionsPath>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)..\..\target\swarm\bakeoff-ui-dotnet\bin\</BaseOutputPath>
+    <PublishDir>$(MSBuildThisFileDirectory)..\..\target\swarm\bakeoff-ui-dotnet\publish\</PublishDir>
+    <RestorePackagesPath>$(MSBuildThisFileDirectory)..\..\target\swarm\bakeoff-ui-dotnet\nuget-packages</RestorePackagesPath>
+    <RestoreFallbackFolders>C:\Users\User\.nuget\packages</RestoreFallbackFolders>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=EntroCloud
+GenericName=Zero-Knowledge Cloud Drive & Backup
+Comment=Zero-knowledge client-side encrypted multi-cloud virtual filesystem and automatic folder backup
+Exec=/usr/bin/entrocloud %u
+TryExec=/usr/bin/entrocloud
+Icon=entrocloud
+Terminal=false
+Categories=Utility;Security;Network;FileTools;
+MimeType=x-scheme-handler/ec;x-scheme-handler/zv;
+Keywords=encryption;cloud;backup;vault;fuse;post-quantum;entrocloud;
+StartupNotify=true
+StartupWMClass=entrocloud

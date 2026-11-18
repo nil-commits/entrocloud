@@ -1,0 +1,68 @@
+[package]
+name = "alloc_bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+name = "alloc_bench"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bench_system"
+path = "src/bin/bench_system.rs"
+
+[[bin]]
+name = "bench_mimalloc"
+path = "src/bin/bench_mimalloc.rs"
+required-features = ["mimalloc_alloc"]
+
+[[bin]]
+name = "bench_rpmalloc"
+path = "src/bin/bench_rpmalloc.rs"
+required-features = ["rpmalloc_alloc"]
+
+[[bin]]
+name = "bench_jemalloc"
+path = "src/bin/bench_jemalloc.rs"
+required-features = ["jemalloc_alloc"]
+
+[[bin]]
+name = "run_matrix"
+path = "src/bin/run_matrix.rs"
+
+[features]
+default = []
+mimalloc_alloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
+rpmalloc_alloc = ["dep:rpmalloc", "dep:rpmalloc-sys"]
+jemalloc_alloc = ["dep:tikv-jemallocator"]
+
+[dependencies]
+bytes = "1"
+zeroize = { version = "1", features = ["alloc", "zeroize_derive"] }
+aws-lc-rs = { version = "1", default-features = true, features = ["prebuilt-nasm"] }
+blake3 = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+mimalloc = { version = "0.1", default-features = false, optional = true }
+libmimalloc-sys = { version = "0.1", default-features = false, features = ["extended"], optional = true }
+rpmalloc = { version = "0.2", optional = true }
+rpmalloc-sys = { version = "0.2", optional = true }
+tikv-jemallocator = { version = "0.6", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = true
+strip = false

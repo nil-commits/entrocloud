@@ -1,0 +1,43 @@
+[package]
+name = "entrocloud-vfs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+entrocloud-types = { workspace = true }
+zeroize = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+cloud-filter = { workspace = true }
+flagset = { workspace = true }
+nt-time = { workspace = true }
+widestring = { workspace = true }
+windows = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+fuser = { workspace = true }
+libc = { workspace = true }
+nix = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+proptest = { workspace = true }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "windows_vfs_bench"
+harness = false
+
+[[bench]]
+name = "linux_vfs_bench"
+harness = false
