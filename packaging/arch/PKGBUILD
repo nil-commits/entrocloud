@@ -6,6 +6,7 @@ pkgdesc="Zero-knowledge multi-cloud encrypted virtual filesystem and automatic f
 arch=('x86_64' 'aarch64')
 url="https://cloud.entropy.rs/entrocloud"
 license=('MIT' 'Apache-2.0')
+options=('!lto')
 depends=(
   'dbus'
   'fuse3'
