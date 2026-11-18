@@ -170,11 +170,12 @@ jobs:
           - **Arch Linux & Unix Parity:** Enabled pure-Rust `ksni` StatusNotifierItem tray on Linux, Linux single-instance window focus, Apple-feel Linux font discovery (`Inter`/`Cantarell`/`JetBrains Mono`), `SIGTERM` graceful daemon shutdown, `libc::O_NOFOLLOW` (`aarch64`-safe), `0o600` atomic private writes, FUSE3 stale-mount recovery, and updated `PKGBUILD` & systemd user units.
           EOF
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" release-assets/* --clobber
-            gh release edit "$TAG" --notes-file release-notes.md
+          if gh release view "$TAG" -R "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber -R "${{ github.repository }}"
+            gh release edit "$TAG" --notes-file release-notes.md -R "${{ github.repository }}"
           else
             gh release create "$TAG" release-assets/* \
+              -R "${{ github.repository }}" \
               --title "EntroCloud ${TAG} — Windows & Arch Linux" \
               --notes-file release-notes.md
           fi
