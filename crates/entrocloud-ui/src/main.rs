@@ -34,6 +34,20 @@ fn main() {
 
     let cli = UiCliArgs::parse();
 
+    if cli.daemon {
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false)
+            .compact()
+            .try_init();
+        if let Err(err) = entrocloud_daemon::run_daemon_blocking(None, cli.ipc, false, 30) {
+            eprintln!("EntroCloud background service error: {err:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     if !cli.bench_cold && cli.screenshot_tour.is_none() && cli.screenshot_modals.is_none() {
         let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
         let _ = tracing_subscriber::fmt()

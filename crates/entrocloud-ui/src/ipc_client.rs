@@ -402,17 +402,22 @@ impl IpcClient {
             )));
         }
 
-        let daemon_exe = locate_sibling_executable("entrocloudd")
+        let sibling_daemon = locate_sibling_executable("entrocloudd")
             .or_else(|| locate_sibling_executable("EntroCloudd"))
             .or_else(|| locate_sibling_executable("zerovaultd"));
 
-        let Some(daemon_exe) = daemon_exe else {
-            return Err(ZeroVaultError::IpcError(
-                "EntroCloud background service is offline and sibling entrocloudd binary was not found".into(),
-            ));
+        let launched_path = if let Some(daemon_exe) = sibling_daemon {
+            spawn_detached_daemon(&daemon_exe, &self.endpoint)?;
+            daemon_exe
+        } else {
+            let self_exe = std::env::current_exe().map_err(|err| {
+                ZeroVaultError::IpcError(format!(
+                    "EntroCloud background service is offline and current executable path could not be resolved: {err}"
+                ))
+            })?;
+            spawn_detached_embedded_daemon(&self_exe, &self.endpoint)?;
+            self_exe
         };
-
-        spawn_detached_daemon(&daemon_exe, &self.endpoint)?;
 
         let deadline = Instant::now() + timeout;
         let mut last_err = String::from("background service starting");
@@ -428,7 +433,7 @@ impl IpcClient {
 
         Err(ZeroVaultError::IpcError(format!(
             "started {} but connection timed out: {last_err}",
-            daemon_exe.display()
+            launched_path.display()
         )))
     }
 }
@@ -508,6 +513,20 @@ fn spawn_detached_daemon(daemon_exe: &Path, endpoint: &IpcEndpoint) -> ZeroVault
     spawn_detached_process(
         daemon_exe,
         &["--ipc", ep_str.as_str()],
+        &[
+            ("ENTROCLOUD_IPC", ep_str.as_str()),
+            ("ENTROCLOUD_ENDPOINT", ep_str.as_str()),
+            ("ZEROVAULT_IPC", ep_str.as_str()),
+            ("ZEROVAULT_ENDPOINT", ep_str.as_str()),
+        ],
+    )
+}
+
+fn spawn_detached_embedded_daemon(ui_exe: &Path, endpoint: &IpcEndpoint) -> ZeroVaultResult<()> {
+    let ep_str = endpoint.to_string();
+    spawn_detached_process(
+        ui_exe,
+        &["--daemon", "--ipc", ep_str.as_str()],
         &[
             ("ENTROCLOUD_IPC", ep_str.as_str()),
             ("ENTROCLOUD_ENDPOINT", ep_str.as_str()),

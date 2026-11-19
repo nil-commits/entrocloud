@@ -12,17 +12,9 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
 
-use anyhow::{Context, anyhow};
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
-use entrocloud_core::reclaim_process_memory;
-use entrocloud_daemon::{DaemonRuntime, DaemonStateConfig, IpcEndpoint, IpcServer};
-
-/// Dedicated 8 MiB thread stack size for host and Tokio worker threads (prevents 1 MiB PE stack overflow in `dev` builds).
-const DAEMON_THREAD_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -57,125 +49,12 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     let args = DaemonArgs::parse();
-
-    let join_handle = std::thread::Builder::new()
-        .name("entrocloudd-main".to_owned())
-        .stack_size(DAEMON_THREAD_STACK_BYTES)
-        .spawn(move || -> anyhow::Result<()> {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .thread_name("entrocloudd-worker")
-                .thread_stack_size(DAEMON_THREAD_STACK_BYTES)
-                .enable_all()
-                .build()
-                .context("failed building Tokio multi-thread runtime")?;
-            rt.block_on(Box::pin(async_main(args)))
-        })
-        .context("failed spawning 8 MiB entrocloudd-main thread")?;
-
-    match join_handle.join() {
-        Ok(res) => res,
-        Err(_) => Err(anyhow!("entrocloudd-main thread panicked unexpectedly")),
-    }
-}
-
-async fn async_main(args: DaemonArgs) -> anyhow::Result<()> {
-    let sync_interval = Duration::from_secs(args.sync_interval_secs);
-    let config = match args.state_dir {
-        Some(state_dir) => DaemonStateConfig::new(state_dir),
-        None => DaemonStateConfig::default(),
-    }
-    .with_mock_vfs(args.mock_vfs)
-    .with_sync_interval(sync_interval);
-
-    let endpoint = match args.ipc {
-        Some(raw) => IpcEndpoint::parse(&raw).context("invalid --ipc / --endpoint value")?,
-        None => IpcEndpoint::from_env_or_default().context("failed resolving IPC endpoint")?,
-    };
-
-    let runtime = Arc::new(
-        DaemonRuntime::new_default(config).context("failed initializing EntroCloud daemon runtime")?,
-    );
-    let server = IpcServer::bind(endpoint)
-        .await
-        .context("failed binding EntroCloud IPC server")?;
-
-    let bg_sync = runtime.spawn_background_sync(sync_interval);
-    reclaim_process_memory().await;
-
-    tracing::info!(
-        endpoint = %server.endpoint(),
-        mock_vfs = args.mock_vfs,
-        sync_interval_secs = args.sync_interval_secs,
-        "entrocloudd listening"
-    );
-
-    let shutdown_runtime = Arc::clone(&runtime);
-    let signal_shutdown = Box::pin(async move {
-        let signal_name = wait_for_shutdown_signal().await;
-        tracing::info!(
-            signal = signal_name,
-            "received shutdown signal, locking vault and unmounting virtual drive"
-        );
-        if let Err(err) = shutdown_runtime.graceful_shutdown().await {
-            tracing::warn!(error = %err, "error during graceful shutdown");
-        }
-    });
-
-    let dispatch_runtime = Arc::clone(&runtime);
-    let serve_res = server
-        .serve_with_shutdown(
-            move |req| {
-                let rt = Arc::clone(&dispatch_runtime);
-                Box::pin(async move { rt.handle_request(req).await })
-            },
-            signal_shutdown,
-        )
-        .await;
-
-    if let Some(bg) = bg_sync {
-        bg.stop().await;
-    }
-    let _ = runtime.graceful_shutdown().await;
-
-    serve_res.context("IPC server exited with error")?;
-    tracing::info!("entrocloudd exited cleanly");
-    Ok(())
-}
-
-async fn wait_for_shutdown_signal() -> &'static str {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-
-        match signal(SignalKind::terminate()) {
-            Ok(mut sigterm) => {
-                tokio::select! {
-                    res = tokio::signal::ctrl_c() => {
-                        if let Err(err) = res {
-                            tracing::warn!(error = %err, "failed awaiting ctrl-c signal");
-                        }
-                        "SIGINT"
-                    }
-                    _ = sigterm.recv() => "SIGTERM",
-                }
-            }
-            Err(err) => {
-                tracing::warn!(error = %err, "failed registering SIGTERM handler; falling back to Ctrl-C only");
-                if let Err(ctrl_err) = tokio::signal::ctrl_c().await {
-                    tracing::warn!(error = %ctrl_err, "failed awaiting ctrl-c signal");
-                }
-                "SIGINT"
-            }
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        if let Err(err) = tokio::signal::ctrl_c().await {
-            tracing::warn!(error = %err, "failed awaiting ctrl-c signal");
-        }
-        "Ctrl-C"
-    }
+    entrocloud_daemon::run_daemon_blocking(
+        args.state_dir,
+        args.ipc,
+        args.mock_vfs,
+        args.sync_interval_secs,
+    )
 }
 
 #[cfg(test)]

@@ -44,6 +44,11 @@ pub struct UiCliArgs {
     #[arg(long = "screenshot-modals", value_name = "OUTPUT_DIR")]
     pub screenshot_modals: Option<PathBuf>,
 
+    /// Internal single-executable background daemon mode (spawned automatically by `EntroCloud.exe`
+    /// when no separate sibling `entrocloudd` binary is present).
+    #[arg(long = "daemon", hide = true)]
+    pub daemon: bool,
+
     /// Optional positional `ec://...` or `zv://...` URI passed directly by OS protocol handlers.
     #[arg(value_name = "URI")]
     pub positional_uri: Option<String>,

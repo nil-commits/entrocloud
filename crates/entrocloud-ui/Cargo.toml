@@ -33,7 +33,7 @@ tracing-subscriber = { workspace = true }
 tray-icon = { workspace = true }
 uuid = { workspace = true }
 entrocloud-crypto = { workspace = true, optional = true }
-entrocloud-daemon = { workspace = true, optional = true }
+entrocloud-daemon = { workspace = true }
 entrocloud-types = { workspace = true }
 zeroize = { workspace = true }
 
