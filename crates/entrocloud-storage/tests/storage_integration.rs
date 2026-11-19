@@ -1055,6 +1055,54 @@ async fn mirrored_manifest_cas_uses_composite_json_etag_and_enforces_optimistic_
 }
 
 #[tokio::test]
+async fn local_fs_consecutive_manifest_cas_writes_preserve_matching_etag() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().to_string_lossy().to_string();
+    let backend = CloudBackend::from_config(&base_config("local-1", BackendKind::LocalFs, &root))
+        .expect("local fs backend");
+    let router = StorageRouter::new(
+        vec![backend],
+        RoutingPolicy::QuotaPooled {
+            pool_backends: vec!["local-1".to_owned()],
+        },
+    )
+    .expect("router");
+
+    let v1 = router
+        .put_manifest_cas(
+            MANIFEST_HEAD_OBJECT_KEY,
+            Bytes::from_static(b"ZVM1-batch-1-payload"),
+            None,
+        )
+        .await
+        .expect("batch 1 publish");
+    let etag1 = v1.etag.expect("batch 1 etag");
+
+    // Batch 2 immediately after Batch 1 must match stat_object() without ETag mismatch.
+    let v2 = router
+        .put_manifest_cas(
+            MANIFEST_HEAD_OBJECT_KEY,
+            Bytes::from_static(b"ZVM1-batch-2-larger-payload"),
+            Some(&etag1),
+        )
+        .await
+        .expect("batch 2 publish must not fail with manifest ETag mismatch");
+    let etag2 = v2.etag.expect("batch 2 etag");
+    assert_ne!(etag1, etag2);
+
+    // Batch 3 immediately after Batch 2 must also succeed.
+    let v3 = router
+        .put_manifest_cas(
+            MANIFEST_HEAD_OBJECT_KEY,
+            Bytes::from_static(b"ZVM1-batch-3-even-larger-payload"),
+            Some(&etag2),
+        )
+        .await
+        .expect("batch 3 publish must succeed");
+    assert!(v3.etag.is_some());
+}
+
+#[tokio::test]
 async fn chaos_storage_router_deterministic_faults_and_replica_bitflip_failover() {
     let b1 = CloudBackend::from_config(&base_config("replica-1", BackendKind::Memory, "/"))
         .expect("r1");

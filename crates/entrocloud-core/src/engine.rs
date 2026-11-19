@@ -1935,10 +1935,51 @@ impl SyncEngine {
             .await?;
         self.stats.record_upload(snap_ver.content_length);
 
-        let head_ver = self
+        let head_ver = match self
             .storage
-            .put_manifest_cas(MANIFEST_HEAD_OBJECT_KEY, sealed, cur_etag.as_deref())
-            .await?;
+            .put_manifest_cas(MANIFEST_HEAD_OBJECT_KEY, sealed.clone(), cur_etag.as_deref())
+            .await
+        {
+            Ok(ver) => ver,
+            Err(ZeroVaultError::StorageConflict(conflict_msg)) => {
+                // Self-heal stale local ETag (e.g. after daemon restart on a synthetic-ETag
+                // backend or upgrading from an older version) when the remote head has no
+                // newer revision than our local cursor.
+                let refreshed_etag = if let Ok(Some(remote_ver)) = self
+                    .storage
+                    .stat_object(MANIFEST_HEAD_OBJECT_KEY, &[])
+                    .await
+                    && remote_ver.etag.as_deref() != cur_etag.as_deref()
+                    && let Ok(remote_manifest) = self
+                        .fetch_and_open_manifest(MANIFEST_HEAD_OBJECT_KEY, &[])
+                        .await
+                    && remote_manifest.vault_id == vault_id
+                    && self
+                        .verify_manifest_rollback_and_lineage(&remote_manifest, cur_rev)
+                        .await
+                        .is_ok()
+                    && remote_manifest.revision <= cur_rev
+                {
+                    tracing::info!(
+                        cur_rev,
+                        remote_rev = remote_manifest.revision,
+                        "recovering from stale manifest ETag during publish"
+                    );
+                    Some(remote_ver.etag)
+                } else {
+                    None
+                };
+
+                if let Some(fresh_etag) = refreshed_etag {
+                    self.storage
+                        .put_manifest_cas(MANIFEST_HEAD_OBJECT_KEY, sealed, fresh_etag.as_deref())
+                        .await?
+                } else {
+                    return Err(ZeroVaultError::StorageConflict(conflict_msg));
+                }
+            }
+            Err(err) => return Err(err),
+        };
         self.stats.record_upload(head_ver.content_length);
 
         self.meta

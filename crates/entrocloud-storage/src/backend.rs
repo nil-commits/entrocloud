@@ -496,7 +496,7 @@ impl CloudBackend {
         match write_res {
             Ok(meta) => {
                 self.commit_write_accounting(object_key, reservation);
-                let etag = self.record_etag_after_write(object_key, &meta);
+                let etag = self.resolve_etag_after_write(object_key, &meta, len).await;
                 self.record_success(started.elapsed());
                 Ok(ReplicaTarget {
                     backend_id: self.config.id.clone(),
@@ -571,7 +571,7 @@ impl CloudBackend {
         match write_res {
             Ok(meta) => {
                 self.commit_write_accounting(object_key, reservation);
-                let etag = self.record_etag_after_write(object_key, &meta);
+                let etag = self.resolve_etag_after_write(object_key, &meta, len).await;
                 let last_modified = metadata_last_modified_utc(&meta).or_else(|| Some(Utc::now()));
                 self.record_success(started.elapsed());
                 Ok(RemoteVersion {
@@ -797,15 +797,44 @@ impl CloudBackend {
         }
     }
 
-    fn record_etag_after_write(&self, object_key: &str, meta: &Metadata) -> String {
-        if let Some(etag) = meta.etag().filter(|s| !s.is_empty()) {
+    /// Resolves a durable ETag after `operator.write()`.
+    ///
+    /// Many OpenDAL backends (Google Drive, Dropbox, LocalFs, WebDAV) return `Metadata` with
+    /// `etag() == None`, `content_length() == 0`, and `last_modified() == None` from `write()`,
+    /// while `stat()` returns the real server ETag or real `(content_length, last_modified)`.
+    /// Querying `stat()` when `write()` omits a native ETag ensures the returned ETag matches
+    /// subsequent `stat_object()` CAS checks (and survives daemon restarts on cloud providers).
+    async fn resolve_etag_after_write(
+        &self,
+        object_key: &str,
+        write_meta: &Metadata,
+        written_len: u64,
+    ) -> String {
+        if let Some(etag) = write_meta.etag().filter(|s| !s.is_empty()) {
             return etag.to_owned();
+        }
+        if let Ok(stat_meta) = self.operator.stat(object_key).await {
+            if let Some(etag) = stat_meta.etag().filter(|s| !s.is_empty()) {
+                return etag.to_owned();
+            }
+            let fresh = format!("\"{}\"", Uuid::new_v4().as_simple());
+            let entry = SyntheticEtagEntry {
+                etag: fresh.clone(),
+                content_length: stat_meta.content_length(),
+                last_modified: metadata_ts_tuple(&stat_meta),
+            };
+            self.synthetic_etags.insert(object_key.to_owned(), entry);
+            return fresh;
         }
         let fresh = format!("\"{}\"", Uuid::new_v4().as_simple());
         let entry = SyntheticEtagEntry {
             etag: fresh.clone(),
-            content_length: meta.content_length(),
-            last_modified: metadata_ts_tuple(meta),
+            content_length: if write_meta.content_length() > 0 {
+                write_meta.content_length()
+            } else {
+                written_len
+            },
+            last_modified: metadata_ts_tuple(write_meta),
         };
         self.synthetic_etags.insert(object_key.to_owned(), entry);
         fresh
